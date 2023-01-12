@@ -54,6 +54,9 @@ func (r *bucketChunkReader) reset() {
 
 // addLoad adds the chunk with id to the data set to be fetched.
 // Chunk will be fetched and saved to res[seriesEntry][chunk] upon r.load(res, <...>) call.
+// TODO dimitarvdimitrov add a new method which takes a chunksGroup instead of an IDs
+// since it takes a group, we need to estimate the length of the last chunk - we can make it 2x the length of the largest chunk in the group; we should measure how often we under-read form the bucket because of a wrong estimation
+// and also convert the chunksGroup into many loadIdx
 func (r *bucketChunkReader) addLoad(id chunks.ChunkRef, seriesEntry, chunk int) error {
 	var (
 		seq = int(id >> 32)
@@ -130,6 +133,7 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, s
 	)
 
 	for i, pIdx := range pIdxs {
+		// TODO dimitarvdimitrov extract this into a function - from here until... ------
 		// Fast forward range reader to the next chunk start in case of sparse (for our purposes) byte range.
 		for readOffset < int(pIdx.offset) {
 			written, err = io.CopyN(io.Discard, bufReader, int64(pIdx.offset)-int64(readOffset))
@@ -159,7 +163,7 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, s
 		if n < 1 {
 			return errors.New("reading chunk length failed")
 		}
-
+		// ------ until here + include returning a slice
 		// Chunk length is n (number of bytes used to encode chunk data), 1 for chunk encoding and chunkDataLen for actual chunk data.
 		// There is also crc32 after the chunk, but we ignore that.
 		chunkLen = n + 1 + int(chunkDataLen)
@@ -272,6 +276,7 @@ func newChunkReaders(readersMap map[ulid.ULID]chunkReader) *bucketChunkReaders {
 	}
 }
 
+// TODO dimitarvdimitrov add a new method which takes a chunksGroup instead of chunkRef and uses chunk as the index of the first chunk in the series slice instead of the particular pointer to that
 func (r bucketChunkReaders) addLoad(blockID ulid.ULID, id chunks.ChunkRef, seriesEntry, chunk int) error {
 	return r.readers[blockID].addLoad(id, seriesEntry, chunk)
 }

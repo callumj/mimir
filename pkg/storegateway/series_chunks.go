@@ -337,10 +337,15 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 
 	c.chunkReaders.reset()
 
+	// TODO dimitarvdimitrov for every chunksGroup we should check the cache - we will get a byte slice with the chunks data for all chunks in the group
+	// 		So we need to parse them - see https://ganeshvernekar.com/blog/prometheus-tsdb-persistent-block-and-its-index/#2-chunks
+	// TODO dimitarvdimitrov next iterate over the cache misses and fetch data from the bucket
 	for i, s := range nextUnloaded.series {
 		nextSet.series[i].lset = s.lset
 		nextSet.series[i].chks = nextSet.newSeriesAggrChunkSlice(len(s.chunks))
 
+		// TODO dimitarvdimitrov here instead of going over a slice of chunks we will have a slice of chunksGroups
+		// 		Use the new method on chunkReaders
 		for j, chunk := range s.chunks {
 			nextSet.series[i].chks[j].MinTime = chunk.minTime
 			nextSet.series[i].chks[j].MaxTime = chunk.maxTime
@@ -356,6 +361,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Create a batched memory pool that can be released all at once.
 	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
 
+	// TODO dimitarvdimitrov do this only for the cache misses
 	err := c.chunkReaders.load(nextSet.series, chunksPool, c.stats)
 	if err != nil {
 		c.err = errors.Wrap(err, "loading chunks")

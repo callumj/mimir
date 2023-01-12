@@ -774,11 +774,12 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 		if !shardOwned(s.shard, s.seriesHasher, id, lset, loadStats) {
 			continue
 		}
-
+		// TODO dimitarvdimitrov also partition the separate chunks into chunkGroups (currently by segment file); important not to take into account mint maxt of the request when splitting the gorups
 		nextSet.series = append(nextSet.series, seriesChunkRefs{
 			lset:   lset,
 			chunks: chks,
 		})
+		// TODO dimitarvdimitrov then also skip any groups that don't overlap with mint, maxt
 	}
 
 	if nextSet.len() == 0 {
@@ -804,6 +805,7 @@ func (s *loadingSeriesChunkRefsSetIterator) Err() error {
 	return s.err
 }
 
+// TODO dimitarvdimitrov create another funciton which returns a group of chunks instead of []seriesChunkRef
 func (s *loadingSeriesChunkRefsSetIterator) loadSeriesForTime(ref storage.SeriesRef, loadedSeries *bucketIndexLoadedSeries, stats *queryStats) (labels.Labels, []seriesChunkRef, error) {
 	ok, err := loadedSeries.unsafeLoadSeriesForTime(ref, &s.symbolizedLsetBuffer, &s.chksBuffer, s.skipChunks, s.minTime, s.maxTime, stats)
 	if !ok || err != nil {

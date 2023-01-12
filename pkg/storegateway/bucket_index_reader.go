@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid"
 	otlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -581,6 +582,21 @@ func (l *bucketIndexLoadedSeries) addSeries(ref storage.SeriesRef, data []byte) 
 	l.seriesMx.Unlock()
 }
 
+type chunk struct {
+	blockID          ulid.ULID
+	ref              chunks.ChunkRef
+	minTime, maxTime int64
+	length           uint32 // this will be 0 for the last chunk for a series because we don't know its length
+}
+
+type chunksGroup struct {
+	// firstRef and lastRef must be in the same segment file
+	// this assumes that the chunks of a single series are continuous within a segment file
+	// TODO technically we don't need a whole chunkRef for the lastRef because a chunkRef contains the id of the segment file, which is the same as the segment file in firstRef
+	firstRef, lastRef chunks.ChunkRef
+	chunks            []chunk
+}
+
 // unsafeLoadSeriesForTime populates the given symbolized labels for the series identified by the reference if at least one chunk is within
 // time selection.
 // unsafeLoadSeriesForTime also populates chunk metas slices if skipChunks is set to false. Chunks are also limited by the given time selection.
@@ -589,6 +605,7 @@ func (l *bucketIndexLoadedSeries) addSeries(ref storage.SeriesRef, data []byte) 
 // Error is returned on decoding error or if the reference does not resolve to a known series.
 //
 // It's NOT safe to call this function concurrently with addSeries().
+// TODO dimitarvdimitrov create a new function which takes a different type instead of chunks.Meta, which also doesn't take mint and maxt and returns all chunks
 func (l *bucketIndexLoadedSeries) unsafeLoadSeriesForTime(ref storage.SeriesRef, lset *[]symbolizedLabel, chks *[]chunks.Meta, skipChunks bool, mint, maxt int64, stats *queryStats) (ok bool, err error) {
 	b, ok := l.series[ref]
 	if !ok {
