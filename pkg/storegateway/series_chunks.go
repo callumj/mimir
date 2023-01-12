@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/grafana/mimir/pkg/storegateway/chunkscache"
 	"github.com/grafana/mimir/pkg/storegateway/storepb"
 	util_math "github.com/grafana/mimir/pkg/util/math"
 	"github.com/grafana/mimir/pkg/util/pool"
@@ -169,9 +170,9 @@ func newSeriesChunksSeriesSet(from seriesChunksSetIterator) storepb.SeriesSet {
 	}
 }
 
-func newSeriesSetWithChunks(ctx context.Context, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, iteratorLoadDurations *prometheus.HistogramVec) storepb.SeriesSet {
+func newSeriesSetWithChunks(ctx context.Context, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, iteratorLoadDurations *prometheus.HistogramVec, cache chunkscache.ChunksCache) storepb.SeriesSet {
 	var iterator seriesChunksSetIterator
-	iterator = newLoadingSeriesChunksSetIterator(chunkReaders, refsIterator, refsIteratorBatchSize, stats)
+	iterator = newLoadingSeriesChunksSetIterator(chunkReaders, refsIterator, refsIteratorBatchSize, stats, cache)
 	iterator = newDurationMeasuringIterator[seriesChunksSet](iterator, iteratorLoadDurations.WithLabelValues("chunks_load"))
 	iterator = newPreloadingSetIterator[seriesChunksSet](ctx, 1, iterator)
 	// We are measuring the time we wait for a preloaded batch. In an ideal world this is 0 because there's always a preloaded batch waiting.
@@ -292,16 +293,20 @@ type loadingSeriesChunksSetIterator struct {
 	fromBatchSize int
 	stats         *safeQueryStats
 
+	cache chunkscache.ChunksCache
+
 	current seriesChunksSet
 	err     error
 }
 
-func newLoadingSeriesChunksSetIterator(chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats) *loadingSeriesChunksSetIterator {
+// TODO dimitarvdimitrov add/update tests with the chunks cache
+func newLoadingSeriesChunksSetIterator(chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats, cache chunkscache.ChunksCache) *loadingSeriesChunksSetIterator {
 	return &loadingSeriesChunksSetIterator{
 		chunkReaders:  chunkReaders,
 		from:          from,
 		fromBatchSize: fromBatchSize,
 		stats:         stats,
+		cache:         cache,
 	}
 }
 
@@ -339,6 +344,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 
 	// TODO dimitarvdimitrov for every chunksGroup we should check the cache - we will get a byte slice with the chunks data for all chunks in the group
 	// 		So we need to parse them - see https://ganeshvernekar.com/blog/prometheus-tsdb-persistent-block-and-its-index/#2-chunks
+	//		Also ignore any chunks that do not overlap with mint, maxt of the request
 	// TODO dimitarvdimitrov next iterate over the cache misses and fetch data from the bucket
 	for i, s := range nextUnloaded.series {
 		nextSet.series[i].lset = s.lset
@@ -367,7 +373,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		c.err = errors.Wrap(err, "loading chunks")
 		return false
 	}
-
+	// TODO dimitarvdimitrov after loading from the bucket, remove any chunks that overlapping with mint, maxt of the request
 	nextSet.chunksReleaser = chunksPool
 	c.current = nextSet
 	return true
