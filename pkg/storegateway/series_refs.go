@@ -106,14 +106,14 @@ func (b seriesChunkRefsSet) release() {
 // seriesChunkRefs holds a series with a list of chunk references.
 type seriesChunkRefs struct {
 	lset   labels.Labels
-	chunks []seriesChunkRef
+	chunks []chunksGroup
 }
 
 // seriesChunkRef holds the reference to a chunk in a given block.
 type seriesChunkRef struct {
-	blockID          ulid.ULID
 	ref              chunks.ChunkRef
 	minTime, maxTime int64
+	length           int64 // this will be 0 for the last chunk for a series because we don't know its length
 }
 
 // Compare returns > 0 if m should be before other when sorting seriesChunkRef,

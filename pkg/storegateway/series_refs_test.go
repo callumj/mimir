@@ -35,20 +35,20 @@ func init() {
 }
 
 func TestSeriesChunkRef_Compare(t *testing.T) {
-	input := []seriesChunkRef{
-		{blockID: ulid.MustNew(0, nil), minTime: 2, maxTime: 5},
-		{blockID: ulid.MustNew(1, nil), minTime: 1, maxTime: 5},
-		{blockID: ulid.MustNew(2, nil), minTime: 1, maxTime: 3},
-		{blockID: ulid.MustNew(3, nil), minTime: 4, maxTime: 7},
-		{blockID: ulid.MustNew(4, nil), minTime: 3, maxTime: 6},
+	input := []chunksGroup{
+		{blockID: ulid.MustNew(0, nil), chunks: []seriesChunkRef{{minTime: 2, maxTime: 5}}},
+		{blockID: ulid.MustNew(1, nil), chunks: []seriesChunkRef{{minTime: 1, maxTime: 5}}},
+		{blockID: ulid.MustNew(2, nil), chunks: []seriesChunkRef{{minTime: 1, maxTime: 3}}},
+		{blockID: ulid.MustNew(3, nil), chunks: []seriesChunkRef{{minTime: 4, maxTime: 7}}},
+		{blockID: ulid.MustNew(4, nil), chunks: []seriesChunkRef{{minTime: 3, maxTime: 6}}},
 	}
 
-	expected := []seriesChunkRef{
-		{blockID: ulid.MustNew(2, nil), minTime: 1, maxTime: 3},
-		{blockID: ulid.MustNew(1, nil), minTime: 1, maxTime: 5},
-		{blockID: ulid.MustNew(0, nil), minTime: 2, maxTime: 5},
-		{blockID: ulid.MustNew(4, nil), minTime: 3, maxTime: 6},
-		{blockID: ulid.MustNew(3, nil), minTime: 4, maxTime: 7},
+	expected := []chunksGroup{
+		{blockID: ulid.MustNew(2, nil), chunks: []seriesChunkRef{{minTime: 1, maxTime: 3}}},
+		{blockID: ulid.MustNew(1, nil), chunks: []seriesChunkRef{{minTime: 1, maxTime: 5}}},
+		{blockID: ulid.MustNew(0, nil), chunks: []seriesChunkRef{{minTime: 2, maxTime: 5}}},
+		{blockID: ulid.MustNew(4, nil), chunks: []seriesChunkRef{{minTime: 3, maxTime: 6}}},
+		{blockID: ulid.MustNew(3, nil), chunks: []seriesChunkRef{{minTime: 4, maxTime: 7}}},
 	}
 
 	sort.Slice(input, func(i, j int) bool {
@@ -81,9 +81,9 @@ func TestSeriesChunkRefsIterator(t *testing.T) {
 	t.Run("should iterate a set with some items", func(t *testing.T) {
 		it := newSeriesChunkRefsIterator(seriesChunkRefsSet{
 			series: []seriesChunkRefs{
-				{lset: series1, chunks: []seriesChunkRef{c[0], c[1]}},
-				{lset: series2, chunks: []seriesChunkRef{c[2]}},
-				{lset: series3, chunks: []seriesChunkRef{c[3], c[4]}},
+				{lset: series1, chunks: []chunksGroup{c[0], c[1]}},
+				{lset: series2, chunks: []chunksGroup{c[2]}},
+				{lset: series3, chunks: []chunksGroup{c[3], c[4]}},
 			},
 		})
 
@@ -91,15 +91,15 @@ func TestSeriesChunkRefsIterator(t *testing.T) {
 		require.Zero(t, it.At())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []seriesChunkRef{c[0], c[1]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []chunksGroup{c[0], c[1]}}, it.At())
 		require.False(t, it.Done())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series2, chunks: []seriesChunkRef{c[2]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series2, chunks: []chunksGroup{c[2]}}, it.At())
 		require.False(t, it.Done())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series3, chunks: []seriesChunkRef{c[3], c[4]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series3, chunks: []chunksGroup{c[3], c[4]}}, it.At())
 		require.False(t, it.Done())
 
 		require.False(t, it.Next())
@@ -110,9 +110,9 @@ func TestSeriesChunkRefsIterator(t *testing.T) {
 	t.Run("should re-initialize the internal state on reset()", func(t *testing.T) {
 		it := newSeriesChunkRefsIterator(seriesChunkRefsSet{
 			series: []seriesChunkRefs{
-				{lset: series1, chunks: []seriesChunkRef{c[0], c[1]}},
-				{lset: series2, chunks: []seriesChunkRef{c[2]}},
-				{lset: series3, chunks: []seriesChunkRef{c[3], c[4]}},
+				{lset: series1, chunks: []chunksGroup{c[0], c[1]}},
+				{lset: series2, chunks: []chunksGroup{c[2]}},
+				{lset: series3, chunks: []chunksGroup{c[3], c[4]}},
 			},
 		})
 
@@ -120,29 +120,29 @@ func TestSeriesChunkRefsIterator(t *testing.T) {
 		require.Zero(t, it.At())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []seriesChunkRef{c[0], c[1]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []chunksGroup{c[0], c[1]}}, it.At())
 		require.False(t, it.Done())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series2, chunks: []seriesChunkRef{c[2]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series2, chunks: []chunksGroup{c[2]}}, it.At())
 		require.False(t, it.Done())
 
 		// Reset.
 		it.reset(seriesChunkRefsSet{
 			series: []seriesChunkRefs{
-				{lset: series1, chunks: []seriesChunkRef{c[3]}},
-				{lset: series4, chunks: []seriesChunkRef{c[4]}},
+				{lset: series1, chunks: []chunksGroup{c[3]}},
+				{lset: series4, chunks: []chunksGroup{c[4]}},
 			},
 		})
 
 		require.False(t, it.Done())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []seriesChunkRef{c[3]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series1, chunks: []chunksGroup{c[3]}}, it.At())
 		require.False(t, it.Done())
 
 		require.True(t, it.Next())
-		require.Equal(t, seriesChunkRefs{lset: series4, chunks: []seriesChunkRef{c[4]}}, it.At())
+		require.Equal(t, seriesChunkRefs{lset: series4, chunks: []chunksGroup{c[4]}}, it.At())
 		require.False(t, it.Done())
 
 		require.False(t, it.Next())
@@ -170,58 +170,58 @@ func TestFlattenedSeriesChunkRefs(t *testing.T) {
 		"should iterate a set with multiple items": {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}}),
 			expected: []seriesChunkRefs{
-				{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-				{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+				{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+				{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 			},
 		},
 		"should iterate multiple sets with multiple items each": {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
 				}},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}}),
 			expected: []seriesChunkRefs{
-				{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-				{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
-				{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
-				{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-				{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+				{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+				{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
+				{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
+				{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+				{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 			},
 		},
 		"should keep iterating on empty sets": {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
 				}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}},
 				seriesChunkRefsSet{}),
 			expected: []seriesChunkRefs{
-				{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-				{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
-				{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
-				{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-				{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+				{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+				{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
+				{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
+				{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+				{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 			},
 		},
 	}
@@ -253,18 +253,18 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1], c[2], c[3]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1], c[2], c[3]}},
 				}},
 			},
 		},
@@ -272,19 +272,19 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[0]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[0]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[0], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[0], c[2], c[3]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[0], c[0], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[0], c[0], c[2], c[3]}},
 				}},
 			},
 		},
@@ -293,14 +293,14 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			set1:      emptySeriesChunkRefsSetIterator{},
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
 				}},
 			},
 		},
@@ -308,12 +308,12 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(errors.New("something went wrong"), seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
 				},
 			}),
 			expectedSets: nil, // We expect no returned sets because an error occurred while creating the first one.
@@ -323,12 +323,12 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(errors.New("something went wrong"), seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
 				},
 			}),
 			expectedSets: nil, // We expect no returned sets because an error occurred while creating the first one.
@@ -338,15 +338,15 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(errors.New("something went wrong"), seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v3"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v4"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v3"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v4"), chunks: make([]chunksGroup, 1)},
 				},
 			}),
 			expectedSets: nil, // We expect no returned sets because an error occurred while creating the first one.
@@ -356,25 +356,25 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 1, // Use a batch size of 1 in this test so that we can see when the iteration stops.
 			set1: newSliceSeriesChunkRefsSetIterator(errors.New("something went wrong"), seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[2]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[3]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[3]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0]}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[1]}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[2]}},
 				}},
 			},
 			expectedErr: "something went wrong",
@@ -383,17 +383,17 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1], c[3]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0], c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0], c[2]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0], c[1], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0], c[1], c[2], c[3]}},
 				}},
 			},
 		},
@@ -401,17 +401,17 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0], c[3]}},
 				},
 			}),
 			set2: newSliceSeriesChunkRefsSetIterator(nil, seriesChunkRefsSet{
 				series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1], c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1], c[2]}},
 				},
 			}),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[0], c[1], c[2], c[3]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[0], c[1], c[2], c[3]}},
 				}},
 			},
 		},
@@ -419,103 +419,103 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 1,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 				seriesChunkRefsSet{},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3], c[3]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3], c[3]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			},
 		},
 		"should keep iterating on empty underlying sets (batch size = 2)": {
 			batchSize: 2,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 				seriesChunkRefsSet{},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3], c[3]}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3], c[3]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}},
 			},
 		},
 		"should keep iterating on second set after first set is exhausted (batch size = 1)": {
 			batchSize: 1,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			},
 		},
 		"should keep iterating on second set after first set is exhausted (batch size = 100)": {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}},
 			},
 		},
@@ -523,43 +523,43 @@ func TestMergedSeriesChunkRefsSet(t *testing.T) {
 			batchSize: 1,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			},
 		},
 		"should keep iterating on first set after second set is exhausted (batch size = 100)": {
 			batchSize: 100,
 			set1: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}}}},
 				seriesChunkRefsSet{},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}}}},
 			),
 			set2: newSliceSeriesChunkRefsSetIterator(nil,
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}}}},
-				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}}}},
+				seriesChunkRefsSet{series: []seriesChunkRefs{{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}}}},
 			),
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}},
 			},
 		},
@@ -759,8 +759,8 @@ func TestSeriesSetWithoutChunks(t *testing.T) {
 		"should iterate a set with multiple items": {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}}),
 			expected: []labels.Labels{
 				labels.FromStrings("l1", "v1"),
@@ -770,15 +770,15 @@ func TestSeriesSetWithoutChunks(t *testing.T) {
 		"should iterate multiple sets with multiple items each": {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
 				}},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}}),
 			expected: []labels.Labels{
 				labels.FromStrings("l1", "v1"),
@@ -792,17 +792,17 @@ func TestSeriesSetWithoutChunks(t *testing.T) {
 			input: newSliceSeriesChunkRefsSetIterator(nil,
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{c[1]}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{c[2]}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{c[1]}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{c[2]}},
 				}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{c[3]}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{c[3]}},
 				}},
 				seriesChunkRefsSet{},
 				seriesChunkRefsSet{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{c[4]}},
-					{lset: labels.FromStrings("l1", "v5"), chunks: []seriesChunkRef{c[5]}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{c[4]}},
+					{lset: labels.FromStrings("l1", "v5"), chunks: []chunksGroup{c[5]}},
 				}},
 				seriesChunkRefsSet{}),
 			expected: []labels.Labels{
@@ -840,13 +840,13 @@ func TestDeduplicatingSeriesChunkRefsSetIterator(t *testing.T) {
 	series3 := labels.FromStrings("l1", "v3")
 	sourceSets := []seriesChunkRefsSet{
 		{series: []seriesChunkRefs{
-			{lset: series1, chunks: []seriesChunkRef{c[0], c[1]}},
-			{lset: series1, chunks: []seriesChunkRef{c[2], c[3], c[4]}},
+			{lset: series1, chunks: []chunksGroup{c[0], c[1]}},
+			{lset: series1, chunks: []chunksGroup{c[2], c[3], c[4]}},
 		}},
 		{series: []seriesChunkRefs{
-			{lset: series2, chunks: []seriesChunkRef{c[0], c[1], c[2], c[3]}},
-			{lset: series3, chunks: []seriesChunkRef{c[0]}},
-			{lset: series3, chunks: []seriesChunkRef{c[1]}},
+			{lset: series2, chunks: []chunksGroup{c[0], c[1], c[2], c[3]}},
+			{lset: series3, chunks: []chunksGroup{c[0]}},
+			{lset: series3, chunks: []chunksGroup{c[1]}},
 		}},
 	}
 
@@ -860,15 +860,15 @@ func TestDeduplicatingSeriesChunkRefsSetIterator(t *testing.T) {
 
 		require.Len(t, sets[0].series, 1)
 		assert.Equal(t, series1, sets[0].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
 
 		require.Len(t, sets[1].series, 1)
 		assert.Equal(t, series2, sets[1].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3]}, sets[1].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3]}, sets[1].series[0].chunks)
 
 		require.Len(t, sets[2].series, 1)
 		assert.Equal(t, series3, sets[2].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1]}, sets[2].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1]}, sets[2].series[0].chunks)
 	})
 
 	t.Run("batch size: 2", func(t *testing.T) {
@@ -883,16 +883,16 @@ func TestDeduplicatingSeriesChunkRefsSetIterator(t *testing.T) {
 		require.Len(t, sets[0].series, 2)
 
 		assert.Equal(t, series1, sets[0].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
 
 		assert.Equal(t, series2, sets[0].series[1].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3]}, sets[0].series[1].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3]}, sets[0].series[1].chunks)
 
 		// Second batch.
 		require.Len(t, sets[1].series, 1)
 
 		assert.Equal(t, series3, sets[1].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1]}, sets[1].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1]}, sets[1].series[0].chunks)
 	})
 
 	t.Run("batch size: 3", func(t *testing.T) {
@@ -905,23 +905,23 @@ func TestDeduplicatingSeriesChunkRefsSetIterator(t *testing.T) {
 		require.Len(t, sets[0].series, 3)
 
 		assert.Equal(t, series1, sets[0].series[0].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3], c[4]}, sets[0].series[0].chunks)
 
 		assert.Equal(t, series2, sets[0].series[1].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1], c[2], c[3]}, sets[0].series[1].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1], c[2], c[3]}, sets[0].series[1].chunks)
 
 		assert.Equal(t, series3, sets[0].series[2].lset)
-		assert.Equal(t, []seriesChunkRef{c[0], c[1]}, sets[0].series[2].chunks)
+		assert.Equal(t, []chunksGroup{c[0], c[1]}, sets[0].series[2].chunks)
 	})
 }
 
 func TestDeduplicatingSeriesChunkRefsSetIterator_PropagatesErrors(t *testing.T) {
 	chainedSet := newDeduplicatingSeriesChunkRefsSetIterator(100, newSliceSeriesChunkRefsSetIterator(errors.New("something went wrong"), seriesChunkRefsSet{
 		series: []seriesChunkRefs{
-			{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-			{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-			{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
-			{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
+			{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+			{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+			{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
+			{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
 		},
 	}))
 
@@ -946,10 +946,10 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedSetsCount: 1,
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 			},
 		},
@@ -960,10 +960,10 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedErr:       "exceeded chunks limit",
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 2)},
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 3)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 4)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 2)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 3)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 4)},
 				}},
 			},
 		},
@@ -974,12 +974,12 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedErr:       "exceeded chunks limit",
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 			},
 		},
@@ -990,10 +990,10 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedErr:       "exceeded series limit",
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 			},
 		},
@@ -1004,12 +1004,12 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedErr:       "exceeded series limit",
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 			},
 		},
@@ -1021,12 +1021,12 @@ func TestLimitingSeriesChunkRefsSetIterator(t *testing.T) {
 			expectedErr:       "something went wrong",
 			sets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l1", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l1", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l1", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l2", "v1"), chunks: make([]seriesChunkRef, 1)},
-					{lset: labels.FromStrings("l2", "v2"), chunks: make([]seriesChunkRef, 1)},
+					{lset: labels.FromStrings("l2", "v1"), chunks: make([]chunksGroup, 1)},
+					{lset: labels.FromStrings("l2", "v2"), chunks: make([]chunksGroup, 1)},
 				}},
 			},
 		},
@@ -1078,10 +1078,10 @@ func TestLoadingSeriesChunkRefsSetIterator(t *testing.T) {
 			matchers:  []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "l1", "v[1-4]")},
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{{minTime: 10, maxTime: 10, ref: 26}}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{{minTime: 20, maxTime: 20, ref: 234}}},
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{{firstRef: 26, lastRef: 26, chunks: []seriesChunkRef{{minTime: 10, maxTime: 10, ref: 26}}}}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{{firstRef: 234, lastRef: 234, chunks: []seriesChunkRef{{minTime: 20, maxTime: 20, ref: 234}}}}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{{firstRef: 442, lastRef: 442, chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}}}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{{firstRef: 650, lastRef: 650, chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}}}},
 				}},
 			},
 		},
@@ -1092,12 +1092,12 @@ func TestLoadingSeriesChunkRefsSetIterator(t *testing.T) {
 			matchers:  []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "l1", "v[1-4]")},
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v1"), chunks: []seriesChunkRef{{minTime: 10, maxTime: 10, ref: 26}}},
-					{lset: labels.FromStrings("l1", "v2"), chunks: []seriesChunkRef{{minTime: 20, maxTime: 20, ref: 234}}},
+					{lset: labels.FromStrings("l1", "v1"), chunks: []chunksGroup{{firstRef: 26, lastRef: 26, chunks: []seriesChunkRef{{minTime: 10, maxTime: 10, ref: 26}}}}},
+					{lset: labels.FromStrings("l1", "v2"), chunks: []chunksGroup{{firstRef: 234, lastRef: 234, chunks: []seriesChunkRef{{minTime: 20, maxTime: 20, ref: 234}}}}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{{firstRef: 442, lastRef: 442, chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}}}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{{firstRef: 650, lastRef: 650, chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}}}},
 				}},
 			},
 		},
@@ -1130,8 +1130,8 @@ func TestLoadingSeriesChunkRefsSetIterator(t *testing.T) {
 			matchers:  []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "l1", "v[1-4]")},
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}},
-					{lset: labels.FromStrings("l1", "v4"), chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{{firstRef: 442, lastRef: 442, chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}}}},
+					{lset: labels.FromStrings("l1", "v4"), chunks: []chunksGroup{{firstRef: 650, lastRef: 650, chunks: []seriesChunkRef{{minTime: 40, maxTime: 40, ref: 650}}}}},
 				}},
 			},
 		},
@@ -1162,7 +1162,7 @@ func TestLoadingSeriesChunkRefsSetIterator(t *testing.T) {
 			matchers:  []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "l1", "v[1-4]")},
 			expectedSets: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("l1", "v3"), chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}},
+					{lset: labels.FromStrings("l1", "v3"), chunks: []chunksGroup{{firstRef: 442, lastRef: 442, chunks: []seriesChunkRef{{minTime: 30, maxTime: 30, ref: 442}}}}},
 				}},
 			},
 		},
@@ -1235,12 +1235,18 @@ func TestLoadingSeriesChunkRefsSetIterator(t *testing.T) {
 					if !assert.Lenf(t, actualSeries.chunks, len(expectedSeries.chunks), "%d, %d", i, j) {
 						continue
 					}
-					for k, actualChunk := range actualSeries.chunks {
-						expectedChunk := expectedSeries.chunks[k]
-						assert.Equalf(t, expectedChunk.maxTime, actualChunk.maxTime, "%d, %d, %d", i, j, k)
-						assert.Equalf(t, expectedChunk.minTime, actualChunk.minTime, "%d, %d, %d", i, j, k)
-						assert.Equalf(t, int(expectedChunk.ref), int(actualChunk.ref), "%d, %d, %d", i, j, k)
-						assert.Equalf(t, block.meta.ULID, actualChunk.blockID, "%d, %d, %d", i, j, k)
+					for k, actualGroup := range actualSeries.chunks {
+						expectedGroup := expectedSeries.chunks[k]
+						assert.Equalf(t, expectedGroup.firstRef, actualGroup.firstRef, "%d, %d, %d", i, j, k)
+						assert.Equalf(t, expectedGroup.lastRef, actualGroup.lastRef, "%d, %d, %d", i, j, k)
+						assert.Equalf(t, expectedGroup.blockID, actualGroup.blockID, "%d, %d, %d", i, j, k)
+						require.Lenf(t, actualGroup.chunks, len(expectedGroup.chunks), "%d, %d, %d", i, j, k)
+						for l, actualChunk := range actualGroup.chunks {
+							expectedChunk := expectedGroup.chunks[l]
+							assert.Equalf(t, int(expectedChunk.ref), int(actualChunk.ref), "%d, %d, %d, %d", i, j, k, l)
+							assert.Equalf(t, expectedChunk.minTime, actualChunk.minTime, "%d, %d, %d, %d", i, j, k, l)
+							assert.Equalf(t, expectedChunk.maxTime, actualChunk.maxTime, "%d, %d, %d, %d", i, j, k, l)
+						}
 					}
 				}
 			}
@@ -1309,10 +1315,10 @@ func TestOpenBlockSeriesChunkRefsSetsIterator(t *testing.T) {
 			seriesLimit: 100,
 			expectedSeries: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}},
-					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}},
-					{lset: labels.FromStrings("a", "2", "b", "1"), chunks: []seriesChunkRef{{ref: 182, minTime: 200, maxTime: 332}, {ref: 234, minTime: 333, maxTime: 399}}},
-					{lset: labels.FromStrings("a", "2", "b", "2"), chunks: []seriesChunkRef{{ref: 270, minTime: 200, maxTime: 332}, {ref: 322, minTime: 333, maxTime: 399}}},
+					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []chunksGroup{{firstRef: 8, lastRef: 57, chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}}}},
+					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []chunksGroup{{firstRef: 95, lastRef: 144, chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}}}},
+					{lset: labels.FromStrings("a", "2", "b", "1"), chunks: []chunksGroup{{firstRef: 182, lastRef: 234, chunks: []seriesChunkRef{{ref: 182, minTime: 200, maxTime: 332}, {ref: 234, minTime: 333, maxTime: 399}}}}},
+					{lset: labels.FromStrings("a", "2", "b", "2"), chunks: []chunksGroup{{firstRef: 270, lastRef: 322, chunks: []seriesChunkRef{{ref: 270, minTime: 200, maxTime: 332}, {ref: 322, minTime: 333, maxTime: 399}}}}},
 				}},
 			},
 		},
@@ -1323,16 +1329,16 @@ func TestOpenBlockSeriesChunkRefsSetsIterator(t *testing.T) {
 			seriesLimit: 100,
 			expectedSeries: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}},
+					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []chunksGroup{{firstRef: 8, lastRef: 57, chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}}}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}},
+					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []chunksGroup{{firstRef: 95, lastRef: 144, chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}}}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "2", "b", "1"), chunks: []seriesChunkRef{{ref: 182, minTime: 200, maxTime: 332}, {ref: 234, minTime: 333, maxTime: 399}}},
+					{lset: labels.FromStrings("a", "2", "b", "1"), chunks: []chunksGroup{{firstRef: 182, lastRef: 234, chunks: []seriesChunkRef{{ref: 182, minTime: 200, maxTime: 332}, {ref: 234, minTime: 333, maxTime: 399}}}}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "2", "b", "2"), chunks: []seriesChunkRef{{ref: 270, minTime: 200, maxTime: 332}, {ref: 322, minTime: 333, maxTime: 399}}},
+					{lset: labels.FromStrings("a", "2", "b", "2"), chunks: []chunksGroup{{firstRef: 270, lastRef: 322, chunks: []seriesChunkRef{{ref: 270, minTime: 200, maxTime: 332}, {ref: 322, minTime: 333, maxTime: 399}}}}},
 				}},
 			},
 		},
@@ -1343,8 +1349,8 @@ func TestOpenBlockSeriesChunkRefsSetsIterator(t *testing.T) {
 			seriesLimit: 100,
 			expectedSeries: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}},
-					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}},
+					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []chunksGroup{{firstRef: 8, lastRef: 57, chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}}}},
+					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []chunksGroup{{firstRef: 95, lastRef: 144, chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}}}},
 				}},
 			},
 		},
@@ -1355,10 +1361,10 @@ func TestOpenBlockSeriesChunkRefsSetsIterator(t *testing.T) {
 			seriesLimit: 100,
 			expectedSeries: []seriesChunkRefsSet{
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}},
+					{lset: labels.FromStrings("a", "1", "b", "1"), chunks: []chunksGroup{{firstRef: 8, lastRef: 57, chunks: []seriesChunkRef{{ref: 8, minTime: 0, maxTime: 124}, {ref: 57, minTime: 125, maxTime: 199}}}}},
 				}},
 				{series: []seriesChunkRefs{
-					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}},
+					{lset: labels.FromStrings("a", "1", "b", "2"), chunks: []chunksGroup{{firstRef: 95, lastRef: 144, chunks: []seriesChunkRef{{ref: 95, minTime: 0, maxTime: 124}, {ref: 144, minTime: 125, maxTime: 199}}}}},
 				}},
 			},
 		},
@@ -1446,12 +1452,18 @@ func TestOpenBlockSeriesChunkRefsSetsIterator(t *testing.T) {
 					assert.Truef(t, labels.Equal(actualLset, expectedLset), "%d, %d: expected labels %s got labels %s", i, j, expectedLset, actualLset)
 
 					require.Lenf(t, actualSeries.chunks, len(expectedSeries.chunks), "%d, %d", i, j)
-					for k, actualChunk := range actualSeries.chunks {
-						expectedChunk := expectedSeries.chunks[k]
-						assert.Equalf(t, block.meta.ULID, actualChunk.blockID, "%d, %d, %d", i, j, k)
-						assert.Equalf(t, int(expectedChunk.ref), int(actualChunk.ref), "%d, %d, %d", i, j, k)
-						assert.Equalf(t, expectedChunk.minTime, actualChunk.minTime, "%d, %d, %d", i, j, k)
-						assert.Equalf(t, expectedChunk.maxTime, actualChunk.maxTime, "%d, %d, %d", i, j, k)
+					for k, actualGroup := range actualSeries.chunks {
+						expectedGroup := expectedSeries.chunks[k]
+						assert.Equalf(t, expectedGroup.firstRef, actualGroup.firstRef, "%d, %d, %d", i, j, k)
+						assert.Equalf(t, expectedGroup.lastRef, actualGroup.lastRef, "%d, %d, %d", i, j, k)
+						assert.Equalf(t, expectedGroup.blockID, actualGroup.blockID, "%d, %d, %d", i, j, k)
+						require.Lenf(t, actualGroup.chunks, len(expectedGroup.chunks), "%d, %d, %d", i, j, k)
+						for l, actualChunk := range actualGroup.chunks {
+							expectedChunk := expectedGroup.chunks[l]
+							assert.Equalf(t, int(expectedChunk.ref), int(actualChunk.ref), "%d, %d, %d, %d", i, j, k, l)
+							assert.Equalf(t, expectedChunk.minTime, actualChunk.minTime, "%d, %d, %d, %d", i, j, k, l)
+							assert.Equalf(t, expectedChunk.maxTime, actualChunk.maxTime, "%d, %d, %d, %d", i, j, k, l)
+						}
 					}
 				}
 			}
@@ -1855,19 +1867,19 @@ func (l *limiter) Reserve(num uint64) error {
 	return nil
 }
 
-func generateSeriesChunkRef(blockID ulid.ULID, num int) []seriesChunkRef {
-	out := make([]seriesChunkRef, 0, num)
+func generateSeriesChunkRef(blockID ulid.ULID, numChunks int) []chunksGroup {
+	chks := make([]seriesChunkRef, 0, numChunks)
 
-	for i := 0; i < num; i++ {
-		out = append(out, seriesChunkRef{
-			blockID: blockID,
-			ref:     chunks.ChunkRef(i),
+	for i := 0; i < numChunks; i++ {
+		chks = append(chks, seriesChunkRef{
+			ref:     chunks.ChunkRef(10 * i),
 			minTime: int64(i),
 			maxTime: int64(i),
+			length:  10,
 		})
 	}
 
-	return out
+	return []chunksGroup{{blockID: blockID, firstRef: chks[0].ref, lastRef: chks[len(chks)-1].ref, chunks: chks}}
 }
 
 func readAllSeriesChunkRefsSet(it seriesChunkRefsSetIterator) []seriesChunkRefsSet {
