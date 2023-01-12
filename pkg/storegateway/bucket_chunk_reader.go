@@ -133,7 +133,6 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, s
 	)
 
 	for i, pIdx := range pIdxs {
-		// TODO dimitarvdimitrov extract this into a function - from here until... ------
 		// Fast forward range reader to the next chunk start in case of sparse (for our purposes) byte range.
 		for readOffset < int(pIdx.offset) {
 			written, err = io.CopyN(io.Discard, bufReader, int64(pIdx.offset)-int64(readOffset))
@@ -163,7 +162,6 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, s
 		if n < 1 {
 			return errors.New("reading chunk length failed")
 		}
-		// ------ until here + include returning a slice
 		// Chunk length is n (number of bytes used to encode chunk data), 1 for chunk encoding and chunkDataLen for actual chunk data.
 		// There is also crc32 after the chunk, but we ignore that.
 		chunkLen = n + 1 + int(chunkDataLen)
