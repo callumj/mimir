@@ -59,8 +59,8 @@ func (r *bucketChunkReader) reset() {
 // and also convert the chunksGroup into many loadIdx
 func (r *bucketChunkReader) addLoad(id chunks.ChunkRef, seriesEntry, chunk int) error {
 	var (
-		seq = int(id >> 32)
-		off = uint32(id)
+		seq = chunkSegmentFile(id)
+		off = chunkOffset(id)
 	)
 	if seq >= len(r.toLoad) {
 		return errors.Errorf("reference sequence %d out of range", seq)
@@ -68,6 +68,9 @@ func (r *bucketChunkReader) addLoad(id chunks.ChunkRef, seriesEntry, chunk int) 
 	r.toLoad[seq] = append(r.toLoad[seq], loadIdx{off, seriesEntry, chunk})
 	return nil
 }
+
+func chunkSegmentFile(id chunks.ChunkRef) int { return int(id >> 32) }
+func chunkOffset(id chunks.ChunkRef) uint32   { return uint32(id) }
 
 // load all added chunks and saves resulting chunks to res.
 func (r *bucketChunkReader) load(res []seriesEntry, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {

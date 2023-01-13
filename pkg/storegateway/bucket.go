@@ -1874,7 +1874,6 @@ type symbolizedLabel struct {
 // decodeSeriesForTime decodes a series entry from the given byte slice decoding only chunk metas that are within given min and max time.
 // If skipChunks is specified decodeSeriesForTime does not return any chunks, but only labels and only if at least single chunk is within time range.
 // decodeSeriesForTime returns false, when there are no series data for given time range.
-// TODO dimitarvdimtirov make a copy which returns a new data type instead of chunks.Meta
 func decodeSeriesForTime(b []byte, lset *[]symbolizedLabel, chks *[]chunks.Meta, skipChunks bool, selectMint, selectMaxt int64) (ok bool, err error) {
 	*lset = (*lset)[:0]
 	*chks = (*chks)[:0]

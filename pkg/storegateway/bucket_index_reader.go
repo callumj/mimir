@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+	"github.com/prometheus/prometheus/tsdb/encoding"
 	"github.com/prometheus/prometheus/tsdb/index"
 	"github.com/thanos-io/objstore/tracing"
 	"golang.org/x/sync/errgroup"
@@ -582,19 +583,61 @@ func (l *bucketIndexLoadedSeries) addSeries(ref storage.SeriesRef, data []byte) 
 	l.seriesMx.Unlock()
 }
 
-type chunk struct {
-	blockID          ulid.ULID
-	ref              chunks.ChunkRef
-	minTime, maxTime int64
-	length           uint32 // this will be 0 for the last chunk for a series because we don't know its length
+// chunksGroup contains chunks from the same block and the same segment file. They are ordered by their minTime
+type chunksGroup struct {
+	blockID ulid.ULID
+	chunks  []seriesChunkRef
 }
 
-type chunksGroup struct {
-	// firstRef and lastRef must be in the same segment file
-	// this assumes that the chunks of a single series are continuous within a segment file
-	// TODO technically we don't need a whole chunkRef for the lastRef because a chunkRef contains the id of the segment file, which is the same as the segment file in firstRef
-	firstRef, lastRef chunks.ChunkRef
-	chunks            []chunk
+func (g chunksGroup) firstRef() chunks.ChunkRef {
+	if len(g.chunks) == 0 {
+		return chunks.ChunkRef(0)
+	}
+	return g.chunks[0].ref
+}
+
+func (g chunksGroup) lastRef() chunks.ChunkRef {
+	if len(g.chunks) == 0 {
+		return chunks.ChunkRef(0)
+	}
+	return g.chunks[len(g.chunks)-1].ref
+}
+
+func (g chunksGroup) minTime() int64 {
+	if len(g.chunks) == 0 {
+		return 0
+	}
+	// Since chunks in the groups are ordered by minTime, then we can just take the minTime of the first one.
+	return g.chunks[0].minTime
+}
+
+func (g chunksGroup) maxTime() int64 {
+	// Since chunks are only ordered by minTime, we have no guarantee for their maxTIme, so we need to iterate all.
+	var maxT int64
+	for _, c := range g.chunks {
+		if c.maxTime > maxT {
+			maxT = c.maxTime
+		}
+	}
+	return maxT
+}
+
+func (g chunksGroup) Compare(other chunksGroup) int {
+	if g.minTime() < other.minTime() {
+		return 1
+	}
+	if g.minTime() > other.minTime() {
+		return -1
+	}
+	// Same min time.
+
+	if g.maxTime() < other.maxTime() {
+		return 1
+	}
+	if g.maxTime() > other.maxTime() {
+		return -1
+	}
+	return 0
 }
 
 // unsafeLoadSeriesForTime populates the given symbolized labels for the series identified by the reference if at least one chunk is within
@@ -605,7 +648,6 @@ type chunksGroup struct {
 // Error is returned on decoding error or if the reference does not resolve to a known series.
 //
 // It's NOT safe to call this function concurrently with addSeries().
-// TODO dimitarvdimitrov create a new function which takes a different type instead of chunks.Meta, which also doesn't take mint and maxt and returns all chunks
 func (l *bucketIndexLoadedSeries) unsafeLoadSeriesForTime(ref storage.SeriesRef, lset *[]symbolizedLabel, chks *[]chunks.Meta, skipChunks bool, mint, maxt int64, stats *queryStats) (ok bool, err error) {
 	b, ok := l.series[ref]
 	if !ok {
@@ -615,4 +657,77 @@ func (l *bucketIndexLoadedSeries) unsafeLoadSeriesForTime(ref storage.SeriesRef,
 	stats.seriesTouched++
 	stats.seriesTouchedSizeSum += len(b)
 	return decodeSeriesForTime(b, lset, chks, skipChunks, mint, maxt)
+}
+
+// unsafeLoadSeries populates the given symbolized labels for the series identified by the reference if at least one chunk is within
+// time selection.
+// unsafeLoadSeries also returns chunk metas slices if skipChunks is set to false. The returned chunkMetas will be in the same
+// order as in the index, which at this point is ordered by minTime.
+// unsafeLoadSeries returns false, when there are no series data.
+//
+// Error is returned on decoding error or if the reference does not resolve to a known series.
+//
+// It's NOT safe to call this function concurrently with addSeries().
+func (l *bucketIndexLoadedSeries) unsafeLoadSeries(ref storage.SeriesRef, lset *[]symbolizedLabel, skipChunks bool, stats *queryStats) (ok bool, _ []seriesChunkRef, err error) {
+	b, ok := l.series[ref]
+	if !ok {
+		return false, nil, errors.Errorf("series %d not found", ref)
+	}
+	stats.seriesTouched++
+	stats.seriesTouchedSizeSum += len(b)
+	return decodeSeries(b, lset, skipChunks)
+}
+
+// decodeSeries decodes a series entry from the given byte slice decoding only chunk metas that are within given min and max time.
+// If skipChunks is specified decodeSeries does not return any chunks, but only labels and only if at least single chunk is within time range.
+// decodeSeries returns false, when there are no series data.
+func decodeSeries(b []byte, lset *[]symbolizedLabel, skipChunks bool) (ok bool, _ []seriesChunkRef, err error) {
+	*lset = (*lset)[:0]
+
+	d := encoding.Decbuf{B: b}
+
+	// Read labels without looking up symbols.
+	numLabels := d.Uvarint()
+	for i := 0; i < numLabels; i++ {
+		lno := uint32(d.Uvarint())
+		lvo := uint32(d.Uvarint())
+		*lset = append(*lset, symbolizedLabel{name: lno, value: lvo})
+	}
+
+	// Read the chunks meta data.
+	numChunks := d.Uvarint()
+	if numChunks == 0 {
+		return false, nil, d.Err()
+	}
+	chks := make([]seriesChunkRef, 0, numChunks)
+
+	// First t0 is absolute, rest is just diff so different type is used (Uvarint64).
+	mint := d.Varint64()
+	maxt := int64(d.Uvarint64()) + mint
+	// Similar for first ref.
+	ref := int64(d.Uvarint64())
+
+	for i := 0; i < numChunks; i++ {
+		if i > 0 {
+			mint += int64(d.Uvarint64())
+			maxt = int64(d.Uvarint64()) + mint
+			prevChunkLen := d.Varint64()
+			chks[len(chks)-1].length = prevChunkLen
+			ref += prevChunkLen
+		}
+
+		// Found a chunk.
+		if skipChunks {
+			// We are not interested in chunks and we know there is at least one, that's enough to return series.
+			return true, nil, nil
+		}
+
+		chks = append(chks, seriesChunkRef{
+			ref:     chunks.ChunkRef(ref),
+			minTime: mint,
+			maxTime: maxt,
+		})
+		mint = maxt
+	}
+	return true, chks, d.Err()
 }

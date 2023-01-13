@@ -403,7 +403,7 @@ func (s *mergedSeriesChunkRefsSet) nextUniqueEntry(a, b *seriesChunkRefsIterator
 
 	// Slice reuse is not generally safe with nested merge iterators.
 	// We err on the safe side and create a new slice.
-	toReturn.chunks = make([]seriesChunkRef, 0, len(chksA)+len(chksB))
+	toReturn.chunks = make([]chunksGroup, 0, len(chksA)+len(chksB))
 
 	bChunksOffset := 0
 Outer:
@@ -535,6 +535,7 @@ func (s *deduplicatingSeriesChunkRefsSetIterator) Next() bool {
 		nextSeries = s.from.At()
 
 		if labels.Equal(nextSet.series[i].lset, nextSeries.lset) {
+			// We don't need to ensure that chunks are in any particular order. The querier will sort the chunks for a single series.
 			nextSet.series[i].chunks = append(nextSet.series[i].chunks, nextSeries.chunks...)
 		} else {
 			i++
@@ -619,7 +620,6 @@ type loadingSeriesChunkRefsSetIterator struct {
 	logger              log.Logger
 
 	symbolizedLsetBuffer []symbolizedLabel
-	chksBuffer           []chunks.Meta
 
 	err        error
 	currentSet seriesChunkRefsSet
@@ -766,20 +766,26 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 			s.err = errors.Wrap(err, "read series")
 			return false
 		}
-		if lset.Len() == 0 {
-			// No matching chunks for this time duration, skip series
+		if len(lset) == 0 {
+			// This was a series without any chunks; we skip it
 			continue
 		}
-
+		var groups []chunksGroup
+		if !s.skipChunks {
+			groups = partitionChunks(chks, s.blockID)
+			groups = removeGroupsOutsideOfRange(groups, s.minTime, s.maxTime)
+			if len(groups) == 0 {
+				// There are no chunks for this series in the requested time range; skip it
+				continue
+			}
+		}
 		if !shardOwned(s.shard, s.seriesHasher, id, lset, loadStats) {
 			continue
 		}
-		// TODO dimitarvdimitrov also partition the separate chunks into chunkGroups (currently by segment file); important not to take into account mint maxt of the request when splitting the gorups
 		nextSet.series = append(nextSet.series, seriesChunkRefs{
 			lset:   lset,
-			chunks: chks,
+			chunks: groups,
 		})
-		// TODO dimitarvdimitrov then also skip any groups that don't overlap with mint, maxt
 	}
 
 	if nextSet.len() == 0 {
@@ -797,6 +803,32 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 	return true
 }
 
+// removeGroupsOutsideOfRange modifies groups inplace
+func removeGroupsOutsideOfRange(groups []chunksGroup, minTime, maxTime int64) []chunksGroup {
+	writeIdx := 0
+	for i, g := range groups {
+		if g.maxTime() < minTime || g.minTime() > maxTime {
+			groups[i] = chunksGroup{} // empty is so the chunks in it can be garbage-collected
+			continue
+		}
+		groups[writeIdx], groups[i] = groups[i], groups[writeIdx]
+		writeIdx++
+	}
+	return groups[:writeIdx]
+}
+
+// partitionChunks creates a slice of chunksGroup for each groups of chunks within the same segment file
+func partitionChunks(chks []seriesChunkRef, blockID ulid.ULID) []chunksGroup {
+	var groups []chunksGroup
+	for i := range chks {
+		if len(groups) == 0 || chunkSegmentFile(groups[len(groups)-1].lastRef()) != chunkSegmentFile(chks[i].ref) {
+			groups = append(groups, chunksGroup{blockID: blockID})
+		}
+		groups[len(groups)-1].chunks = append(groups[len(groups)-1].chunks, chks[i])
+	}
+	return groups
+}
+
 func (s *loadingSeriesChunkRefsSetIterator) At() seriesChunkRefsSet {
 	return s.currentSet
 }
@@ -805,9 +837,8 @@ func (s *loadingSeriesChunkRefsSetIterator) Err() error {
 	return s.err
 }
 
-// TODO dimitarvdimitrov create another funciton which returns a group of chunks instead of []seriesChunkRef
 func (s *loadingSeriesChunkRefsSetIterator) loadSeriesForTime(ref storage.SeriesRef, loadedSeries *bucketIndexLoadedSeries, stats *queryStats) (labels.Labels, []seriesChunkRef, error) {
-	ok, err := loadedSeries.unsafeLoadSeriesForTime(ref, &s.symbolizedLsetBuffer, &s.chksBuffer, s.skipChunks, s.minTime, s.maxTime, stats)
+	ok, chks, err := loadedSeries.unsafeLoadSeries(ref, &s.symbolizedLsetBuffer, s.skipChunks, stats)
 	if !ok || err != nil {
 		return labels.EmptyLabels(), nil, errors.Wrap(err, "inflateSeriesForTime")
 	}
@@ -817,25 +848,7 @@ func (s *loadingSeriesChunkRefsSetIterator) loadSeriesForTime(ref storage.Series
 		return labels.EmptyLabels(), nil, errors.Wrap(err, "lookup labels symbols")
 	}
 
-	var chks []seriesChunkRef
-	if !s.skipChunks {
-		chks = metasToChunks(s.blockID, s.chksBuffer)
-	}
-
 	return lset, chks, nil
-}
-
-func metasToChunks(blockID ulid.ULID, metas []chunks.Meta) []seriesChunkRef {
-	chks := make([]seriesChunkRef, len(metas))
-	for i, meta := range metas {
-		chks[i] = seriesChunkRef{
-			minTime: meta.MinTime,
-			maxTime: meta.MaxTime,
-			ref:     meta.Ref,
-			blockID: blockID,
-		}
-	}
-	return chks
 }
 
 // cachedSeriesForPostingsID contains enough information to be able to tell whether a cache entry
