@@ -711,9 +711,14 @@ func decodeSeries(b []byte, lset *[]symbolizedLabel, skipChunks bool) (ok bool, 
 		if i > 0 {
 			mint += int64(d.Uvarint64())
 			maxt = int64(d.Uvarint64()) + mint
-			prevChunkLen := d.Varint64()
-			chks[len(chks)-1].length = prevChunkLen
-			ref += prevChunkLen
+			chunkRefDelta := d.Varint64()
+			ref += chunkRefDelta
+			if chunkSegmentFile(chks[len(chks)-1].ref) == chunkSegmentFile(chunks.ChunkRef(ref)) {
+				// We can only infer the length of the previous chunk
+				// if the current and previous chunks are in the same segment file.
+				// Otherwise, the previous chunk ends at the end of the segment file, which we don't know where it is.
+				chks[len(chks)-1].length = chunkRefDelta
+			}
 		}
 
 		// Found a chunk.
