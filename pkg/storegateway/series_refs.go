@@ -106,14 +106,15 @@ func (b seriesChunkRefsSet) release() {
 // seriesChunkRefs holds a series with a list of chunk references.
 type seriesChunkRefs struct {
 	lset   labels.Labels
-	chunks []chunksGroup
+	groups []chunksGroup
 }
 
 // seriesChunkRef holds the reference to a chunk in a given block.
 type seriesChunkRef struct {
 	ref              chunks.ChunkRef
 	minTime, maxTime int64
-	length           int64 // this will be 0 for the last chunk for a series because we don't know its length
+	// TODO dimitarvdimitrov change the type ofthis to uint64
+	length int64 // this will be 0 for the last chunk for a series because we don't know its length
 }
 
 // Compare returns > 0 if m should be before other when sorting seriesChunkRef,
@@ -367,7 +368,7 @@ func (s *mergedSeriesChunkRefsSet) ensureItemAvailableToRead(curr *seriesChunkRe
 }
 
 // nextUniqueEntry returns the next unique entry from both a and b. If a.At() and b.At() have the same
-// label set, nextUniqueEntry merges their chunks. The merged chunks are sorted by their MinTime and then by MaxTIme.
+// label set, nextUniqueEntry merges their groups. The merged groups are sorted by their MinTime and then by MaxTIme.
 func (s *mergedSeriesChunkRefsSet) nextUniqueEntry(a, b *seriesChunkRefsIteratorImpl) (toReturn seriesChunkRefs, _ bool) {
 	if a.Done() && b.Done() {
 		return toReturn, false
@@ -382,9 +383,9 @@ func (s *mergedSeriesChunkRefsSet) nextUniqueEntry(a, b *seriesChunkRefsIterator
 	}
 
 	aAt := a.At()
-	lsetA, chksA := aAt.lset, aAt.chunks
+	lsetA, chksA := aAt.lset, aAt.groups
 	bAt := b.At()
-	lsetB, chksB := bAt.lset, bAt.chunks
+	lsetB, chksB := bAt.lset, bAt.groups
 
 	if d := labels.Compare(lsetA, lsetB); d > 0 {
 		toReturn = b.At()
@@ -403,7 +404,7 @@ func (s *mergedSeriesChunkRefsSet) nextUniqueEntry(a, b *seriesChunkRefsIterator
 
 	// Slice reuse is not generally safe with nested merge iterators.
 	// We err on the safe side and create a new slice.
-	toReturn.chunks = make([]chunksGroup, 0, len(chksA)+len(chksB))
+	toReturn.groups = make([]chunksGroup, 0, len(chksA)+len(chksB))
 
 	bChunksOffset := 0
 Outer:
@@ -411,22 +412,22 @@ Outer:
 		for {
 			if bChunksOffset >= len(chksB) {
 				// No more b chunks.
-				toReturn.chunks = append(toReturn.chunks, chksA[aChunksOffset:]...)
+				toReturn.groups = append(toReturn.groups, chksA[aChunksOffset:]...)
 				break Outer
 			}
 
 			if chksA[aChunksOffset].Compare(chksB[bChunksOffset]) > 0 {
-				toReturn.chunks = append(toReturn.chunks, chksA[aChunksOffset])
+				toReturn.groups = append(toReturn.groups, chksA[aChunksOffset])
 				break
 			} else {
-				toReturn.chunks = append(toReturn.chunks, chksB[bChunksOffset])
+				toReturn.groups = append(toReturn.groups, chksB[bChunksOffset])
 				bChunksOffset++
 			}
 		}
 	}
 
 	if bChunksOffset < len(chksB) {
-		toReturn.chunks = append(toReturn.chunks, chksB[bChunksOffset:]...)
+		toReturn.groups = append(toReturn.groups, chksB[bChunksOffset:]...)
 	}
 
 	a.Next()
@@ -536,7 +537,7 @@ func (s *deduplicatingSeriesChunkRefsSetIterator) Next() bool {
 
 		if labels.Equal(nextSet.series[i].lset, nextSeries.lset) {
 			// We don't need to ensure that chunks are in any particular order. The querier will sort the chunks for a single series.
-			nextSet.series[i].chunks = append(nextSet.series[i].chunks, nextSeries.chunks...)
+			nextSet.series[i].groups = append(nextSet.series[i].groups, nextSeries.groups...)
 		} else {
 			i++
 			if i >= s.batchSize {
@@ -586,12 +587,12 @@ func (l *limitingSeriesChunkRefsSetIterator) Next() bool {
 
 	var totalChunks int
 	for _, s := range l.currentBatch.series {
-		totalChunks += len(s.chunks)
+		totalChunks += len(s.groups)
 	}
 
 	err = l.chunksLimiter.Reserve(uint64(totalChunks))
 	if err != nil {
-		l.err = errors.Wrap(err, "exceeded chunks limit")
+		l.err = errors.Wrap(err, "exceeded groups limit")
 		return false
 	}
 	return true
@@ -784,7 +785,7 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 		}
 		nextSet.series = append(nextSet.series, seriesChunkRefs{
 			lset:   lset,
-			chunks: groups,
+			groups: groups,
 		})
 	}
 
@@ -808,7 +809,7 @@ func removeGroupsOutsideOfRange(groups []chunksGroup, minTime, maxTime int64) []
 	writeIdx := 0
 	for i, g := range groups {
 		if g.maxTime() < minTime || g.minTime() > maxTime {
-			groups[i] = chunksGroup{} // empty is so the chunks in it can be garbage-collected
+			groups[i] = chunksGroup{} // empty is so the groups in it can be garbage-collected
 			continue
 		}
 		groups[writeIdx], groups[i] = groups[i], groups[writeIdx]
@@ -817,7 +818,7 @@ func removeGroupsOutsideOfRange(groups []chunksGroup, minTime, maxTime int64) []
 	return groups[:writeIdx]
 }
 
-// partitionChunks creates a slice of chunksGroup for each groups of chunks within the same segment file
+// partitionChunks creates a slice of chunksGroup for each groups of groups within the same segment file
 func partitionChunks(chks []seriesChunkRef, blockID ulid.ULID) []chunksGroup {
 	var groups []chunksGroup
 	for i := range chks {
