@@ -18,3 +18,32 @@ type ChunksCache interface {
 	FetchMultiChunks(ctx context.Context, userID string, ranges ...Range) (hits map[Range][]byte, misses []Range)
 	StoreChunks(ctx context.Context, userID string, r Range, v []byte)
 }
+
+type inMemory struct {
+	cached map[string]map[Range][]byte
+}
+
+func NewInmemoryChunksCache() ChunksCache {
+	return &inMemory{
+		cached: map[string]map[Range][]byte{},
+	}
+}
+
+func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, ranges ...Range) (hits map[Range][]byte, misses []Range) {
+	hits = make(map[Range][]byte, len(ranges))
+	for i, r := range ranges {
+		if cached, ok := c.cached[userID][r]; ok {
+			hits[r] = cached
+		} else {
+			misses = append(misses, ranges[i])
+		}
+	}
+	return
+}
+
+func (c *inMemory) StoreChunks(ctx context.Context, userID string, r Range, v []byte) {
+	if c.cached[userID] == nil {
+		c.cached[userID] = make(map[Range][]byte)
+	}
+	c.cached[userID][r] = v
+}
