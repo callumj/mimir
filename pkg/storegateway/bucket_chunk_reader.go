@@ -54,9 +54,6 @@ func (r *bucketChunkReader) reset() {
 
 // addLoad adds the chunk with id to the data set to be fetched.
 // Chunk will be fetched and saved to res[seriesEntry][chunk] upon r.load(res, <...>) call.
-// TODO dimitarvdimitrov add a new method which takes a chunksGroup instead of an IDs
-// since it takes a group, we need to estimate the length of the last chunk - we can make it 2x the length of the largest chunk in the group; we should measure how often we under-read form the bucket because of a wrong estimation
-// and also convert the chunksGroup into many loadIdx
 func (r *bucketChunkReader) addLoad(id chunks.ChunkRef, seriesEntry, chunk int) error {
 	var (
 		seq = chunkSegmentFile(id)
@@ -231,6 +228,156 @@ type loadIdx struct {
 	chunk       int
 }
 
+type groupLoadIdx struct {
+	offset uint32
+	estLen int64
+	// Indices, not actual entries and groups.
+	groupEntry int
+}
+
+type bucketChunkGroupReader struct {
+	ctx    context.Context
+	block  *bucketBlock
+	toLoad [][]groupLoadIdx
+}
+
+func newBucketChunkGroupReader(ctx context.Context, block *bucketBlock) *bucketChunkGroupReader {
+	return &bucketChunkGroupReader{
+		ctx:    ctx,
+		block:  block,
+		toLoad: make([][]groupLoadIdx, len(block.chunkObjs)),
+	}
+}
+
+func (r *bucketChunkGroupReader) Close() error {
+	r.block.pendingReaders.Done()
+	return nil
+}
+
+// reset resets the groups scheduled for loading. It does not release any loaded groups.
+func (r *bucketChunkGroupReader) reset() {
+	for i := range r.toLoad {
+		r.toLoad[i] = r.toLoad[i][:0]
+	}
+}
+
+func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEntry int, length int64) error {
+	var (
+		seq = chunkSegmentFile(id)
+		off = chunkOffset(id)
+	)
+	if seq >= len(r.toLoad) {
+		return errors.Errorf("reference sequence %d out of range", seq)
+	}
+	r.toLoad[seq] = append(r.toLoad[seq], groupLoadIdx{offset: off, groupEntry: seriesEntry, estLen: length})
+	return nil
+}
+
+func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error {
+	var maxLen int64
+	for _, c := range g.chunks {
+		if c.length > maxLen {
+			maxLen = c.length
+		}
+	}
+	if maxLen == 0 {
+		// If there was only one groups for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
+		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two
+		// This case should be very rare.
+		maxLen = mimir_tsdb.EstimatedMaxChunkSize / 2
+	}
+	var totalLen int64
+	for _, c := range g.chunks {
+		cLen := c.length
+		if cLen == 0 {
+			cLen = maxLen * 2 // we don't know how big this chunk is; we estimate it to be twice the biggest chunk we've seen for this seris
+		}
+		totalLen += cLen
+	}
+	if err := r.addLoadWithLength(g.firstRef(), groupIdx, totalLen); err != nil {
+		return err
+	}
+	return nil
+}
+
+// load all added groups and saves resulting groups to res.
+func (r *bucketChunkGroupReader) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+	g, ctx := errgroup.WithContext(r.ctx)
+
+	for seq, pIdxs := range r.toLoad {
+		sort.Slice(pIdxs, func(i, j int) bool {
+			return pIdxs[i].offset < pIdxs[j].offset
+		})
+		parts := r.block.partitioner.Partition(len(pIdxs), func(i int) (start, end uint64) {
+			return uint64(pIdxs[i].offset), uint64(pIdxs[i].offset) + uint64(pIdxs[i].estLen)
+		})
+
+		for _, p := range parts {
+			seq := seq
+			p := p
+			indices := pIdxs[p.ElemRng[0]:p.ElemRng[1]]
+			g.Go(func() error {
+				return r.loadGroupedChunks(ctx, res, seq, p, indices, chunksPool, stats)
+			})
+		}
+	}
+	return g.Wait()
+}
+
+// loadChunks will read range [start, end] from the segment file with sequence number seq.
+// This data range covers groups starting at supplied offsets.
+//
+// This function is called concurrently and the same instance of res, part of pIdx is
+// passed to multiple concurrent invocations. However, this shouldn't require a mutex
+// because part and pIdxs is only read, and different calls are expected to write to
+// different groups in the res.
+func (r *bucketChunkGroupReader) loadGroupedChunks(ctx context.Context, res [][]byte, seq int, part Part, groups []groupLoadIdx, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+	fetchBegin := time.Now()
+
+	// Get a reader for the required range.
+	reader, err := r.block.chunkRangeReader(ctx, seq, int64(part.Start), int64(part.End-part.Start))
+	if err != nil {
+		return errors.Wrap(err, "get range reader")
+	}
+	defer runutil.CloseWithLogOnErr(r.block.logger, reader, "readChunkRange close range reader")
+	bufReader := bufio.NewReaderSize(reader, mimir_tsdb.EstimatedMaxChunkSize)
+
+	// Since we may load many groups, to avoid having to lock very frequently we accumulate
+	// all stats in a local instance and then merge it in the defer.
+	localStats := queryStats{}
+	defer stats.merge(&localStats)
+
+	localStats.chunksFetchCount++
+	localStats.chunksFetched += len(groups)
+	localStats.chunksFetchDurationSum += time.Since(fetchBegin)
+	localStats.chunksFetchedSizeSum += int(part.End - part.Start)
+
+	readOffset := int(groups[0].offset)
+
+	for i, gr := range groups {
+		// Fast forward range reader to the next chunk group start in case of sparse byte range.
+		for readOffset < int(gr.offset) {
+			n, err := io.CopyN(io.Discard, bufReader, int64(gr.offset)-int64(readOffset))
+			if err != nil {
+				return errors.Wrap(err, "fast forward range reader")
+			}
+			readOffset += int(n)
+		}
+		estGroupLen := int(gr.estLen)
+		groupBuf := chunksPool.Get(estGroupLen)
+		n, err := io.ReadFull(bufReader, groupBuf)
+		// EOF for last chunk could be a valid case. Any other errors are definitely unexpected.
+		if err != nil && !(errors.Is(err, io.ErrUnexpectedEOF) && i == len(groups)-1) {
+			return errors.Wrap(err, "read chunk group")
+		}
+		readOffset += n
+		res[gr.groupEntry] = groupBuf
+		localStats.chunksTouched++
+		localStats.chunksTouchedSizeSum += estGroupLen
+	}
+	return nil
+}
+
 // rawChunk is a helper type that wraps a chunk's raw bytes and implements the chunkenc.Chunk
 // interface over it.
 // It is used to Store API responses which don't need to introspect and validate the chunk's contents.
@@ -260,7 +407,7 @@ func (b rawChunk) NumSamples() int {
 // bucketChunkReaders holds a collection of chunkReader's for multiple blocks
 // and selects the correct chunk reader to use on each call to addLoad
 type bucketChunkReaders struct {
-	readers map[ulid.ULID]chunkReader
+	readers map[ulid.ULID]chunkGroupReader
 }
 
 type chunkReader interface {
@@ -271,26 +418,33 @@ type chunkReader interface {
 	reset()
 }
 
-func newChunkReaders(readersMap map[ulid.ULID]chunkReader) *bucketChunkReaders {
+type chunkGroupReader interface {
+	io.Closer
+
+	addLoadGroup(g chunksGroup, groupEntry int) error
+	loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error
+	reset()
+}
+
+func newChunkGroupReaders(readersMap map[ulid.ULID]chunkGroupReader) *bucketChunkReaders {
 	return &bucketChunkReaders{
 		readers: readersMap,
 	}
 }
 
-// TODO dimitarvdimitrov add a new method which takes a chunksGroup instead of chunkRef and uses chunk as the index of the first chunk in the series slice instead of the particular pointer to that
-func (r bucketChunkReaders) addLoad(blockID ulid.ULID, id chunks.ChunkRef, seriesEntry, chunk int) error {
-	return r.readers[blockID].addLoad(id, seriesEntry, chunk)
+func (r bucketChunkReaders) addLoadGroup(blockID ulid.ULID, g chunksGroup, groupEntry int) error {
+	return r.readers[blockID].addLoadGroup(g, groupEntry)
 }
 
-func (r bucketChunkReaders) load(entries []seriesEntry, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+func (r bucketChunkReaders) loadGroups(entries [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
 	g := &errgroup.Group{}
 	for _, reader := range r.readers {
 		reader := reader
 		g.Go(func() error {
 			// We don't need synchronisation on the access to entries because each chunk in
-			// every series will be loaded by exactly one reader. Since the chunks slices are already
+			// every series will be loaded by exactly one reader. Since the groups slices are already
 			// initialized to the correct length, they don't need to be resized and can just be accessed.
-			return reader.load(entries, chunksPool, stats)
+			return reader.loadGroups(entries, chunksPool, stats)
 		})
 	}
 

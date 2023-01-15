@@ -891,7 +891,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, srv storepb.Store_Serie
 
 	span, ctx := tracing.StartSpan(ctx, "bucket_store_preload_all")
 
-	blocks, indexReaders, chunkReaders := s.openBlocksForReading(ctx, req.SkipChunks, req.MinTime, req.MaxTime, req.MaxResolutionWindow, reqBlockMatchers)
+	blocks, indexReaders, chunkReaders, chunkGroupReaders := s.openBlocksForReading(ctx, req.SkipChunks, req.MinTime, req.MaxTime, req.MaxResolutionWindow, reqBlockMatchers)
 	// We must keep the readers open until all their data has been sent.
 	for _, r := range indexReaders {
 		defer runutil.CloseWithLogOnErr(s.logger, r, "close block index reader")
@@ -921,7 +921,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, srv storepb.Store_Serie
 	} else {
 		var readers *bucketChunkReaders
 		if !req.SkipChunks {
-			readers = newChunkReaders(chunkReaders)
+			readers = newChunkGroupReaders(chunkGroupReaders)
 		}
 
 		seriesSet, resHints, err = s.streamingSeriesSetForBlocks(ctx, req, blocks, indexReaders, readers, shardSelector, matchers, chunksLimiter, seriesLimiter, stats)
@@ -1172,7 +1172,7 @@ func (s *BucketStore) streamingSeriesSetForBlocks(
 	mergedBatches := mergedSeriesChunkRefsSetIterators(s.maxSeriesPerBatch, batches...)
 	var set storepb.SeriesSet
 	if chunkReaders != nil {
-		set = newSeriesSetWithChunks(ctx, *chunkReaders, mergedBatches, s.maxSeriesPerBatch, stats, s.metrics.iteratorLoadDurations, s.chunksCache)
+		set = newSeriesSetWithChunks(ctx, s.userID, *chunkReaders, mergedBatches, s.maxSeriesPerBatch, stats, s.metrics.iteratorLoadDurations, s.chunksCache)
 	} else {
 		set = newSeriesSetWithoutChunks(ctx, mergedBatches)
 	}
@@ -1207,7 +1207,7 @@ func (s *BucketStore) recordSeriesCallResult(safeStats *safeQueryStats) {
 	s.metrics.expandPostingsDuration.Observe(stats.expandedPostingsDuration.Seconds())
 }
 
-func (s *BucketStore) openBlocksForReading(ctx context.Context, skipChunks bool, minT, maxT, maxResolutionMillis int64, blockMatchers []*labels.Matcher) ([]*bucketBlock, map[ulid.ULID]*bucketIndexReader, map[ulid.ULID]chunkReader) {
+func (s *BucketStore) openBlocksForReading(ctx context.Context, skipChunks bool, minT, maxT, maxResolutionMillis int64, blockMatchers []*labels.Matcher) ([]*bucketBlock, map[ulid.ULID]*bucketIndexReader, map[ulid.ULID]chunkReader, map[ulid.ULID]chunkGroupReader) {
 	s.blocksMx.RLock()
 	defer s.blocksMx.RUnlock()
 
@@ -1222,7 +1222,7 @@ func (s *BucketStore) openBlocksForReading(ctx context.Context, skipChunks bool,
 		indexReaders[b.meta.ULID] = b.indexReader()
 	}
 	if skipChunks {
-		return blocks, indexReaders, nil
+		return blocks, indexReaders, nil, nil
 	}
 
 	chunkReaders := make(map[ulid.ULID]chunkReader, len(blocks))
@@ -1230,7 +1230,12 @@ func (s *BucketStore) openBlocksForReading(ctx context.Context, skipChunks bool,
 		chunkReaders[b.meta.ULID] = b.chunkReader(ctx)
 	}
 
-	return blocks, indexReaders, chunkReaders
+	chunkGroupReaders := make(map[ulid.ULID]chunkGroupReader, len(blocks))
+	for _, b := range blocks {
+		chunkGroupReaders[b.meta.ULID] = b.chunkGroupReader(ctx)
+	}
+
+	return blocks, indexReaders, chunkReaders, chunkGroupReaders
 }
 
 // LabelNames implements the storepb.StoreServer interface.
@@ -1827,6 +1832,11 @@ func (b *bucketBlock) indexReader() *bucketIndexReader {
 func (b *bucketBlock) chunkReader(ctx context.Context) *bucketChunkReader {
 	b.pendingReaders.Add(1)
 	return newBucketChunkReader(ctx, b)
+}
+
+func (b *bucketBlock) chunkGroupReader(ctx context.Context) *bucketChunkGroupReader {
+	b.pendingReaders.Add(1)
+	return newBucketChunkGroupReader(ctx, b)
 }
 
 // matchLabels verifies whether the block matches the given matchers.

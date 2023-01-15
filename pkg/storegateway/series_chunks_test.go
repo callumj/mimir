@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
+	"github.com/grafana/mimir/pkg/storegateway/chunkscache"
 	"github.com/grafana/mimir/pkg/storegateway/storepb"
 	"github.com/grafana/mimir/pkg/util/pool"
 	"github.com/grafana/mimir/pkg/util/test"
@@ -71,7 +72,7 @@ func TestSeriesChunksSet(t *testing.T) {
 				set.series[i].chks = set.newSeriesAggrChunkSlice(numChunksPerSeries)
 			}
 
-			// Do the same with the chunks.
+			// Do the same with the groups.
 			for i := 0; i < numSeries; i++ {
 				set.series[i].chks = set.newSeriesAggrChunkSlice(numChunksPerSeries)
 				for j := 0; j < numChunksPerSeries; j++ {
@@ -466,7 +467,6 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 		chunkRefs := make([]seriesChunkRef, len(series.chks))
 		for i, c := range series.chks {
 			chunkRefs[i] = seriesChunkRef{
-				blockID: block.ulid,
 				ref:     series.refs[i],
 				minTime: c.MinTime,
 				maxTime: c.MaxTime,
@@ -474,8 +474,10 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 		}
 
 		return seriesChunkRefs{
-			lset:   series.lset,
-			chunks: chunkRefs,
+			lset: series.lset,
+			groups: []chunksGroup{
+				{blockID: block.ulid, chunks: chunkRefs},
+			},
 		}
 	}
 
@@ -537,12 +539,12 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				{series: []seriesEntry{block1.series[1], block2.series[1]}},
 			},
 		},
-		"loads series with chunks from different blocks": {
+		"loads series with groups from different blocks": {
 			existingBlocks: []testBlock{block1, block2},
 			setsToLoad: []seriesChunkRefsSet{
 				{series: func() []seriesChunkRefs {
 					series := toSeriesChunkRefs(block1, 0)
-					series.chunks = append(series.chunks, toSeriesChunkRefs(block2, 0).chunks...)
+					series.groups = append(series.groups, toSeriesChunkRefs(block2, 0).groups...)
 					return []seriesChunkRefs{series}
 				}()},
 			},
@@ -584,14 +586,15 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			chunkBytesSlicePool.(*pool.TrackedPool).Reset()
 
 			// Setup
-			readersMap := make(map[ulid.ULID]chunkReader, len(testCase.existingBlocks))
+			readersMap := make(map[ulid.ULID]chunkGroupReader, len(testCase.existingBlocks))
 			for _, block := range testCase.existingBlocks {
 				readersMap[block.ulid] = newChunkReaderMockWithSeries(block.series, testCase.addLoadErr, testCase.loadErr)
 			}
-			readers := newChunkReaders(readersMap)
+			readers := newChunkGroupReaders(readersMap)
 
 			// Run test
-			set := newLoadingSeriesChunksSetIterator(*readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), nil)
+			// TODO dimitarvdimitrov add tests with other mint/maxt
+			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), 0, 10000)
 			loadedSets := readAllSeriesChunksSets(set)
 
 			// Assertions
@@ -602,7 +605,7 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				assert.NoError(t, set.Err())
 				assert.Greater(t, chunkBytesSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
 			}
-			// Check that chunks bytes are what we expect
+			// Check that groups bytes are what we expect
 			require.Len(t, loadedSets, len(testCase.expectedSets))
 			for i, loadedSet := range loadedSets {
 				require.Len(t, loadedSet.series, len(testCase.expectedSets[i].series))
@@ -642,7 +645,7 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 				numChunksPerSeries = 10
 			)
 
-			// For simplicity all series have the same chunks. This doesn't affect the benchmark anyway.
+			// For simplicity all series have the same groups. This doesn't affect the benchmark anyway.
 			blockID := ulid.MustNew(1, nil)
 			seriesEntries := make([]seriesEntry, 0, numChunksPerSeries)
 			for chunkIdx := 0; chunkIdx < numChunksPerSeries; chunkIdx++ {
@@ -662,25 +665,26 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 				set := createSeriesChunkRefsSet(minSeriesID, maxSeriesID, false)
 
 				for seriesIdx := 0; seriesIdx < set.len(); seriesIdx++ {
-					set.series[seriesIdx].chunks = generateSeriesChunkRef(blockID, numChunksPerSeries)
+					set.series[seriesIdx].groups = generateSeriesChunkRef(blockID, numChunksPerSeries)
 				}
 
 				sets = append(sets, set)
 			}
 
 			// Mock the chunk reader.
-			readersMap := map[ulid.ULID]chunkReader{
+			readersMap := map[ulid.ULID]chunkGroupReader{
 				blockID: newChunkReaderMockWithSeries(seriesEntries, nil, nil),
 			}
 
-			chunkReaders := newChunkReaders(readersMap)
+			chunkReaders := newChunkGroupReaders(readersMap)
 			stats := newSafeQueryStats()
 
 			b.ResetTimer()
 
 			for n := 0; n < b.N; n++ {
 				batchSize := numSeriesPerSet
-				it := newLoadingSeriesChunksSetIterator(*chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, nil)
+				// TODO dimitarvdimitrov add tests with different minT/maxT
+				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, chunkscache.NewInmemoryChunksCache(), 0, 10000)
 
 				actualSeries := 0
 				actualChunks := 0
@@ -705,7 +709,7 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 					b.Fatalf("benchmark iterated through an unexpected number of series (expected: %d got: %d)", expectedSeries, actualSeries)
 				}
 				if expectedChunks := numSets * numSeriesPerSet * numChunksPerSeries; actualChunks != expectedChunks {
-					b.Fatalf("benchmark iterated through an unexpected number of chunks (expected: %d got: %d)", expectedChunks, actualChunks)
+					b.Fatalf("benchmark iterated through an unexpected number of groups (expected: %d got: %d)", expectedChunks, actualChunks)
 				}
 			}
 		})
@@ -732,6 +736,16 @@ func newChunkReaderMockWithSeries(series []seriesEntry, addLoadErr, loadErr erro
 		loadErr:    loadErr,
 		toLoad:     make(map[chunks.ChunkRef]loadIdx),
 	}
+}
+
+func (f *chunkReaderMock) addLoadGroup(g chunksGroup, groupEntry int) error {
+	// TODO dimitarvdimitrov implement these
+	panic("implement me")
+}
+
+func (f *chunkReaderMock) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+	// TODO dimitarvdimitrov implement these
+	panic("implement me")
 }
 
 func (f *chunkReaderMock) Close() error {
@@ -764,7 +778,7 @@ func (f *chunkReaderMock) reset() {
 	f.toLoad = make(map[chunks.ChunkRef]loadIdx)
 }
 
-// generateSeriesEntriesWithChunks generates seriesEntries with chunks. Each chunk is a random byte slice.
+// generateSeriesEntriesWithChunks generates seriesEntries with groups. Each chunk is a random byte slice.
 func generateSeriesEntriesWithChunks(t *testing.T, numSeries int) []seriesEntry {
 	const numChunksPerSeries = 2
 

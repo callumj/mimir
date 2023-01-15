@@ -4,12 +4,16 @@ package storegateway
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
 	"github.com/grafana/mimir/pkg/storegateway/chunkscache"
 	"github.com/grafana/mimir/pkg/storegateway/storepb"
@@ -170,9 +174,9 @@ func newSeriesChunksSeriesSet(from seriesChunksSetIterator) storepb.SeriesSet {
 	}
 }
 
-func newSeriesSetWithChunks(ctx context.Context, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, iteratorLoadDurations *prometheus.HistogramVec, cache chunkscache.ChunksCache) storepb.SeriesSet {
+func newSeriesSetWithChunks(ctx context.Context, userID string, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, iteratorLoadDurations *prometheus.HistogramVec, cache chunkscache.ChunksCache) storepb.SeriesSet {
 	var iterator seriesChunksSetIterator
-	iterator = newLoadingSeriesChunksSetIterator(chunkReaders, refsIterator, refsIteratorBatchSize, stats, cache)
+	iterator = newLoadingSeriesChunksSetIterator(ctx, userID, chunkReaders, refsIterator, refsIteratorBatchSize, stats, cache, 0, 0)
 	iterator = newDurationMeasuringIterator[seriesChunksSet](iterator, iteratorLoadDurations.WithLabelValues("chunks_load"))
 	iterator = newPreloadingSetIterator[seriesChunksSet](ctx, 1, iterator)
 	// We are measuring the time we wait for a preloaded batch. In an ideal world this is 0 because there's always a preloaded batch waiting.
@@ -288,6 +292,9 @@ func (p *preloadingSetIterator[Set]) Err() error {
 }
 
 type loadingSeriesChunksSetIterator struct {
+	ctx    context.Context
+	userID string
+
 	chunkReaders  bucketChunkReaders
 	from          seriesChunkRefsSetIterator
 	fromBatchSize int
@@ -297,16 +304,22 @@ type loadingSeriesChunksSetIterator struct {
 
 	current seriesChunksSet
 	err     error
+	minTime int64
+	maxTime int64
 }
 
 // TODO dimitarvdimitrov add/update tests with the chunks cache
-func newLoadingSeriesChunksSetIterator(chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats, cache chunkscache.ChunksCache) *loadingSeriesChunksSetIterator {
+func newLoadingSeriesChunksSetIterator(ctx context.Context, userID string, chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats, cache chunkscache.ChunksCache, minT int64, maxT int64) *loadingSeriesChunksSetIterator {
 	return &loadingSeriesChunksSetIterator{
+		ctx:           ctx,
+		userID:        userID,
 		chunkReaders:  chunkReaders,
 		from:          from,
 		fromBatchSize: fromBatchSize,
 		stats:         stats,
 		cache:         cache,
+		minTime:       minT,
+		maxTime:       maxT,
 	}
 }
 
@@ -325,6 +338,42 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// This data structure doesn't retain the seriesChunkRefsSet so it can be released once done.
 	defer nextUnloaded.release()
 
+	c.chunkReaders.reset()
+	totalGroups := 0
+	for _, s := range nextUnloaded.series {
+		totalGroups += len(s.groups)
+	}
+	loadedGroups := make([][]byte, totalGroups)
+	ranges := toCacheRanges(nextUnloaded.series, totalGroups)
+	cachedRanges, _ := c.cache.FetchMultiChunks(c.ctx, c.userID, ranges...)
+	currentGroup := 0
+	for _, s := range nextUnloaded.series {
+		// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
+		for _, group := range s.groups {
+			cacheRange := toChunkRange(group)
+			if cachedBytes, ok := cachedRanges[cacheRange]; ok {
+				loadedGroups[currentGroup] = cachedBytes
+				currentGroup++
+				continue
+			}
+			err := c.chunkReaders.addLoadGroup(group.blockID, group, currentGroup)
+			if err != nil {
+				c.err = errors.Wrap(err, "preloading chunks")
+				return false
+			}
+			currentGroup++
+		}
+	}
+
+	// Create a batched memory pool that can be released all at once.
+	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
+	err := c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
+	if err != nil {
+		c.err = errors.Wrap(err, "loading chunks")
+		return false
+	}
+
+	c.chunkReaders.reset()
 	// Pre-allocate the series slice using the expected batchSize even if nextUnloaded has less elements,
 	// so that there's a higher chance the slice will be reused once released.
 	nextSet := newSeriesChunksSet(util_math.Max(c.fromBatchSize, nextUnloaded.len()), true)
@@ -340,43 +389,171 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// so can safely expand it.
 	nextSet.series = nextSet.series[:nextUnloaded.len()]
 
-	c.chunkReaders.reset()
+	// Parse the bytes we
+	underfetchedGroups, err := c.parseGroups(nextUnloaded, nextSet, loadedGroups)
+	if err != nil {
+		c.err = err
+		return false
+	}
 
-	// TODO dimitarvdimitrov for every chunksGroup we should check the cache - we will get a byte slice with the chunks data for all chunks in the group
-	// 		So we need to parse them - see https://ganeshvernekar.com/blog/prometheus-tsdb-persistent-block-and-its-index/#2-chunks
-	//		Also ignore any chunks that do not overlap with mint, maxt of the request
-	// TODO dimitarvdimitrov next iterate over the cache misses and fetch data from the bucket
-	for i, s := range nextUnloaded.series {
-		nextSet.series[i].lset = s.lset
-		nextSet.series[i].chks = nextSet.newSeriesAggrChunkSlice(len(s.chunks))
-
-		// TODO dimitarvdimitrov here instead of going over a slice of chunks we will have a slice of chunksGroups
-		// 		Use the new method on chunkReaders
-		for j, chunk := range s.chunks {
-			nextSet.series[i].chks[j].MinTime = chunk.minTime
-			nextSet.series[i].chks[j].MaxTime = chunk.maxTime
-
-			err := c.chunkReaders.addLoad(chunk.blockID, chunk.ref, i, j)
-			if err != nil {
-				c.err = errors.Wrap(err, "preloading chunks")
-				return false
-			}
+	// Go back to the bucket to fetch anything we undefetched.
+	err = c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
+	if err != nil {
+		c.err = errors.Wrap(err, "refetch groups")
+		return false
+	}
+	for _, indices := range underfetchedGroups {
+		populatedChks := nextSet.series[indices.seriesIdx].chks
+		groupChunksCount := len(nextUnloaded.series[indices.seriesIdx].groups[indices.groupIdx].chunks)
+		ok, lastChkLen, err := parseGroup(loadedGroups[indices.loadedGroupIdx], populatedChks[indices.firstChkIdx:indices.firstChkIdx+groupChunksCount])
+		if err != nil {
+			c.err = errors.Wrap(err, "parsing underfetched group")
+			return false
+		}
+		if !ok {
+			c.err = fmt.Errorf("chunk length doesn't match after refetching (lastChkLen %d, lset %s, group index %d)", lastChkLen, nextSet.series[indices.seriesIdx].lset, indices.groupIdx)
+			return false
 		}
 	}
 
-	// Create a batched memory pool that can be released all at once.
-	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
+	c.storeChunkGroups(nextUnloaded, cachedRanges, loadedGroups)
 
-	// TODO dimitarvdimitrov do this only for the cache misses
-	err := c.chunkReaders.load(nextSet.series, chunksPool, c.stats)
-	if err != nil {
-		c.err = errors.Wrap(err, "loading chunks")
-		return false
+	// Since groups may contain more chunks that we need for the request,
+	// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
+	for i, s := range nextSet.series {
+		firstOverlappingIdx, lastOverlappingIdx := len(s.chks), 0
+		for j, chk := range s.chks {
+			if chk.MaxTime >= c.minTime {
+				if firstOverlappingIdx > j {
+					firstOverlappingIdx = j
+				}
+			}
+			if chk.MinTime <= c.maxTime {
+				if lastOverlappingIdx < j {
+					lastOverlappingIdx = j
+				}
+			}
+		}
+		nextSet.series[i].chks = nextSet.series[i].chks[firstOverlappingIdx : lastOverlappingIdx+1]
 	}
-	// TODO dimitarvdimitrov after loading from the bucket, remove any chunks that overlapping with mint, maxt of the request
+
 	nextSet.chunksReleaser = chunksPool
 	c.current = nextSet
 	return true
+}
+
+func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet, cachedRanges map[chunkscache.Range][]byte, loadedGroups [][]byte) {
+	currentGroup := 0
+	for _, s := range set.series {
+		for _, g := range s.groups {
+			if _, ok := cachedRanges[toChunkRange(g)]; ok {
+				currentGroup++
+				continue
+			}
+			// This was parsed ok and we didn't get it from the cache, so we should cache it.
+			// TODO figure out how to release pooled bytes after they've been cached
+			// Doing a copy shouldn't be the end of the world provided there is some decent cache hit ratio
+			toCache := make([]byte, len(loadedGroups[currentGroup]))
+			// Memcached caching is async, so we can't use the pooled bytes to send to memcached
+			copy(toCache, loadedGroups[currentGroup])
+			c.cache.StoreChunks(c.ctx, c.userID, toChunkRange(g), toCache)
+			currentGroup++
+		}
+	}
+}
+
+type underfetchedGroupIdx struct {
+	seriesIdx      int
+	groupIdx       int
+	firstChkIdx    int
+	loadedGroupIdx int
+}
+
+func (c *loadingSeriesChunksSetIterator) parseGroups(nextUnloaded seriesChunkRefsSet, nextSet seriesChunksSet, loadedGroups [][]byte) ([]underfetchedGroupIdx, error) {
+	var underfetchedGroups []underfetchedGroupIdx
+	currentGroup := 0
+	for i, unloadedS := range nextUnloaded.series {
+		nextSet.series[i].lset = unloadedS.lset
+		totalChunks := 0
+		for _, g := range unloadedS.groups {
+			totalChunks += len(g.chunks)
+		}
+		populatedChks := nextSet.newSeriesAggrChunkSlice(totalChunks)
+		nextSet.series[i].chks = populatedChks
+		populatedChksCount := 0
+		for j, g := range unloadedS.groups {
+			groupChunks := populatedChks[populatedChksCount : populatedChksCount+len(g.chunks)]
+			for k, c := range g.chunks {
+				groupChunks[k].MinTime = c.minTime
+				groupChunks[k].MaxTime = c.maxTime
+				groupChunks[k].Raw = &storepb.Chunk{} // TODO should we do this or does it come as initialized?
+			}
+			ok, lastChkLen, err := parseGroup(loadedGroups[currentGroup], groupChunks)
+			if err != nil {
+				return nil, errors.Wrap(err, "parsing chunk group")
+			}
+			if !ok {
+				// We estimate the length of the last chunk of a series.
+				// Unfortunately, we got it wrong. We need to refetch the whole group.
+				unloadedS.groups[j].chunks[len(unloadedS.groups[j].chunks)-1].length = lastChkLen
+				err = c.chunkReaders.addLoadGroup(g.blockID, unloadedS.groups[j], currentGroup)
+				if err != nil {
+					return nil, errors.Wrap(err, "refetch chunks")
+				}
+				underfetchedGroups = append(underfetchedGroups, underfetchedGroupIdx{
+					seriesIdx:      i,
+					groupIdx:       j,
+					firstChkIdx:    populatedChksCount,
+					loadedGroupIdx: currentGroup,
+				})
+			}
+			populatedChksCount += len(g.chunks)
+			currentGroup++
+		}
+	}
+	return underfetchedGroups, nil
+}
+
+func parseGroup(gBytes []byte, chunks []storepb.AggrChunk) (bool, int64, error) {
+	for i := range chunks {
+		chunkDataLen, n := binary.Uvarint(gBytes)
+		// ┌───────────────┬───────────────────┬──────────────┬────────────────┐
+		// │ len <uvarint> │ encoding <1 byte> │ data <bytes> │ CRC32 <4 byte> │
+		// └───────────────┴───────────────────┴──────────────┴────────────────┘
+		totalChunkLen := n + 1 + int(chunkDataLen) + crc32.Size
+		if totalChunkLen < len(gBytes) {
+			if i != len(chunks)-1 {
+				return false, 0, fmt.Errorf("underfetched before the last chunk, don't know what to do")
+			}
+			return false, int64(totalChunkLen), nil
+		}
+		c := rawChunk(gBytes[n:chunkDataLen])
+		if cEnc := c.Encoding(); cEnc != chunkenc.EncXOR {
+			return false, 0, fmt.Errorf("encoding (%d, %s) isn't XOR, don't know what to do ", cEnc, cEnc.String())
+		}
+		chunks[i].Raw.Type = storepb.Chunk_XOR
+		chunks[i].Raw.Data = c.Bytes()
+		gBytes = gBytes[n+1+int(chunkDataLen)+crc32.Size:]
+	}
+	return true, 0, nil
+}
+
+func toCacheRanges(series []seriesChunkRefs, totalRanges int) []chunkscache.Range {
+	ranges := make([]chunkscache.Range, 0, totalRanges)
+	for _, s := range series {
+		for _, g := range s.groups {
+			ranges = append(ranges, toChunkRange(g))
+		}
+	}
+	return ranges
+}
+
+func toChunkRange(g chunksGroup) chunkscache.Range {
+	return chunkscache.Range{
+		BlockID:   g.blockID,
+		Start:     g.firstRef(),
+		NumChunks: len(g.chunks),
+	}
 }
 
 func (c *loadingSeriesChunksSetIterator) At() seriesChunksSet {
