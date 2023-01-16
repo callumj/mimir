@@ -55,6 +55,7 @@ import (
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
 	"github.com/grafana/mimir/pkg/storage/tsdb/block"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
+	"github.com/grafana/mimir/pkg/storegateway/chunkscache"
 	"github.com/grafana/mimir/pkg/storegateway/hintspb"
 	"github.com/grafana/mimir/pkg/storegateway/indexcache"
 	"github.com/grafana/mimir/pkg/storegateway/indexheader"
@@ -1165,10 +1166,10 @@ func benchBucketSeries(t test.TB, skipChunk bool, samplesPerSeries, totalSeries 
 	}
 
 	for testName, bucketStoreOpts := range map[string][]BucketStoreOption{
-		"with default options":                                 {WithLogger(logger), WithChunkPool(chunkPool)},
-		"with series streaming (1K per batch)":                 {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(1000)},
-		"with series streaming (10K per batch)":                {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(10000)},
-		"with series streaming and index cache (1K per batch)": {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(10000), WithIndexCache(newInMemoryIndexCache(t))},
+		"with default options":                            {WithLogger(logger), WithChunkPool(chunkPool)},
+		"with series streaming (1K per batch)":            {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(1000)},
+		"with series streaming (10K per batch)":           {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(10000)},
+		"with series streaming and caches (1K per batch)": {WithLogger(logger), WithChunkPool(chunkPool), WithStreamingSeriesPerBatch(10000), WithIndexCache(newInMemoryIndexCache(t)), WithChunksCache(chunkscache.NewInmemoryChunksCache())},
 	} {
 		st, err := NewBucketStore(
 			"test",
@@ -1636,6 +1637,8 @@ func TestSeries_ErrorUnmarshallingRequestHints(t *testing.T) {
 	indexCache, err := indexcache.NewInMemoryIndexCacheWithConfig(logger, nil, indexcache.InMemoryIndexCacheConfig{})
 	assert.NoError(t, err)
 
+	chunksCache := chunkscache.NewInmemoryChunksCache()
+
 	store, err := NewBucketStore(
 		"test",
 		instrBkt,
@@ -1653,6 +1656,7 @@ func TestSeries_ErrorUnmarshallingRequestHints(t *testing.T) {
 		NewBucketStoreMetrics(nil),
 		WithLogger(logger),
 		WithIndexCache(indexCache),
+		WithChunksCache(chunksCache),
 	)
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, store.RemoveBlocksAndClose()) }()
@@ -1726,6 +1730,8 @@ func TestSeries_BlockWithMultipleChunks(t *testing.T) {
 	indexCache, err := indexcache.NewInMemoryIndexCacheWithConfig(logger, nil, indexcache.InMemoryIndexCacheConfig{})
 	assert.NoError(t, err)
 
+	chunksCache := chunkscache.NewInmemoryChunksCache()
+
 	store, err := NewBucketStore(
 		"tenant",
 		instrBkt,
@@ -1743,6 +1749,7 @@ func TestSeries_BlockWithMultipleChunks(t *testing.T) {
 		NewBucketStoreMetrics(nil),
 		WithLogger(logger),
 		WithIndexCache(indexCache),
+		WithChunksCache(chunksCache),
 	)
 	assert.NoError(t, err)
 	assert.NoError(t, store.SyncBlocks(context.Background()))
@@ -1891,7 +1898,9 @@ func setupStoreForHintsTest(t *testing.T, opts ...BucketStoreOption) (test.TB, *
 	indexCache, err := indexcache.NewInMemoryIndexCacheWithConfig(logger, nil, indexcache.InMemoryIndexCacheConfig{})
 	assert.NoError(tb, err)
 
-	opts = append([]BucketStoreOption{WithLogger(logger), WithIndexCache(indexCache)}, opts...)
+	chunksCache := chunkscache.NewInmemoryChunksCache()
+
+	opts = append([]BucketStoreOption{WithLogger(logger), WithIndexCache(indexCache), WithChunksCache(chunksCache)}, opts...)
 	store, err := NewBucketStore(
 		"tenant",
 		instrBkt,

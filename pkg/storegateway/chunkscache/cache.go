@@ -16,7 +16,7 @@ type Range struct {
 }
 
 type ChunksCache interface {
-	FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...Range) (hits map[Range][]byte, misses []Range)
+	FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []Range) (hits map[Range][]byte, misses []Range)
 	StoreChunks(ctx context.Context, userID string, r Range, v []byte)
 }
 
@@ -30,11 +30,13 @@ func NewInmemoryChunksCache() ChunksCache {
 	}
 }
 
-func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...Range) (hits map[Range][]byte, misses []Range) {
+func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []Range) (hits map[Range][]byte, misses []Range) {
 	hits = make(map[Range][]byte, len(ranges))
 	for i, r := range ranges {
 		if cached, ok := c.cached[userID][r]; ok {
-			hits[r] = cached
+			pooled := bytesPool.Get(len(cached))
+			copy(pooled, cached)
+			hits[r] = pooled
 		} else {
 			misses = append(misses, ranges[i])
 		}

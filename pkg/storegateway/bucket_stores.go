@@ -459,6 +459,7 @@ func (u *BucketStores) getOrCreateStore(userID string) (*BucketStore, error) {
 	bucketStoreOpts := []BucketStoreOption{
 		WithLogger(userLogger),
 		WithIndexCache(u.indexCache),
+		WithChunksCache(u.chunksCache),
 		WithQueryGate(u.queryGate),
 		WithChunkPool(u.chunksPool),
 		WithStreamingSeriesPerBatch(u.cfg.BucketStore.StreamingBatchSize),

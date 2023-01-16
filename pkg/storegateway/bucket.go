@@ -131,7 +131,7 @@ type BucketStore struct {
 
 type noopCache struct{}
 
-func (noopCache) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
+func (noopCache) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
 	return nil, ranges
 }
 
@@ -898,6 +898,9 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, srv storepb.Store_Serie
 	}
 	for _, r := range chunkReaders {
 		defer runutil.CloseWithLogOnErr(s.logger, r, "close block chunk reader")
+	}
+	for _, r := range chunkGroupReaders {
+		defer runutil.CloseWithLogOnErr(s.logger, r, "close block chunk group reader")
 	}
 
 	span.Finish()

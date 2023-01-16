@@ -340,17 +340,22 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	defer nextUnloaded.release()
 
 	c.chunkReaders.reset()
-	totalGroups := 0
+	groupCount := 0
 	for _, s := range nextUnloaded.series {
-		totalGroups += len(s.groups)
+		groupCount += len(s.groups)
 	}
-	loadedGroups := make([][]byte, totalGroups)
-	ranges := toCacheRanges(nextUnloaded.series, totalGroups)
+	loadedGroups := make([][]byte, groupCount)
+
+	// Create a batched memory pool that can be released all at once. We keep all chunks bytes there.
 	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
-	cachedRanges, _ := c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, ranges...)
+	var cachedRanges map[chunkscache.Range][]byte
+	if c.cache != nil {
+		cachedRanges, _ = c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, toCacheRanges(nextUnloaded.series, groupCount))
+	}
+
+	// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
 	currentGroup := 0
 	for _, s := range nextUnloaded.series {
-		// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
 		for _, group := range s.groups {
 			cacheRange := toChunkRange(group)
 			if cachedBytes, ok := cachedRanges[cacheRange]; ok {
@@ -367,7 +372,6 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		}
 	}
 
-	// Create a batched memory pool that can be released all at once.
 	err := c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
 	if err != nil {
 		c.err = errors.Wrap(err, "loading chunks")
@@ -378,6 +382,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Pre-allocate the series slice using the expected batchSize even if nextUnloaded has less elements,
 	// so that there's a higher chance the slice will be reused once released.
 	nextSet := newSeriesChunksSet(util_math.Max(c.fromBatchSize, nextUnloaded.len()), true)
+	nextSet.chunksReleaser = chunksPool
 
 	// Release the set if an error occurred.
 	defer func() {
@@ -390,7 +395,8 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// so can safely expand it.
 	nextSet.series = nextSet.series[:nextUnloaded.len()]
 
-	// Parse the bytes we
+	// Parse the bytes we have from the cache or the bucket. This returns the groups for which we didn't have
+	// enough fetched bytes. This may happen when the group length was underestimated.
 	underfetchedGroups, err := c.parseGroups(nextUnloaded, &nextSet, loadedGroups)
 	if err != nil {
 		c.err = err
@@ -409,11 +415,12 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Since groups may contain more chunks that we need for the request,
 	// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
 	for i, s := range nextSet.series {
-		firstOverlappingIdx, lastOverlappingIdx := overlappingChunksIndices(s.chks, c.minTime, c.maxTime)
-		nextSet.series[i].chks = nextSet.series[i].chks[firstOverlappingIdx : lastOverlappingIdx+1]
+		firstOverlappingIdx, lastOverlappingIdx, someOverlap := overlappingChunksIndices(s.chks, c.minTime, c.maxTime)
+		if someOverlap {
+			nextSet.series[i].chks = s.chks[firstOverlappingIdx : lastOverlappingIdx+1]
+		}
 	}
 
-	nextSet.chunksReleaser = chunksPool
 	c.current = nextSet
 	return true
 }
@@ -446,24 +453,25 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 	return nil
 }
 
-func overlappingChunksIndices(chks []storepb.AggrChunk, minT, maxT int64) (int, int) {
+func overlappingChunksIndices(chks []storepb.AggrChunk, minT, maxT int64) (int, int, bool) {
 	firstOverlappingIdx, lastOverlappingIdx := len(chks), 0
 	for j, chk := range chks {
-		if chk.MaxTime >= minT {
+		if chk.MaxTime >= minT || chk.MinTime <= maxT {
 			if firstOverlappingIdx > j {
 				firstOverlappingIdx = j
 			}
-		}
-		if chk.MinTime <= maxT {
 			if lastOverlappingIdx < j {
 				lastOverlappingIdx = j
 			}
 		}
 	}
-	return firstOverlappingIdx, lastOverlappingIdx
+	return firstOverlappingIdx, lastOverlappingIdx, firstOverlappingIdx <= lastOverlappingIdx
 }
 
 func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet, cachedRanges map[chunkscache.Range][]byte, loadedGroups [][]byte) {
+	if c.cache == nil {
+		return
+	}
 	currentGroup := 0
 	for _, s := range set.series {
 		for _, g := range s.groups {
@@ -491,37 +499,42 @@ type underfetchedGroupIdx struct {
 	loadedGroupIdx int
 }
 
+// parseGroups parses the passed bytes into nextSet. In case a group was underfetched, parseGroups will return an underfetchedGroupIdx
+// with the indices of the group; parseGroups will also set the correct length of the last chunk in the group
+// because it was the last chunk which was estimated.
 func (c *loadingSeriesChunksSetIterator) parseGroups(nextUnloaded seriesChunkRefsSet, nextSet *seriesChunksSet, loadedGroups [][]byte) ([]underfetchedGroupIdx, error) {
 	var underfetchedGroups []underfetchedGroupIdx
 	currentGroupIdx := 0
 	for i, unloadedS := range nextUnloaded.series {
 		nextSet.series[i].lset = unloadedS.lset
-		totalChunks := 0
+		chunksCount := 0
 		for _, g := range unloadedS.groups {
-			totalChunks += len(g.chunks)
+			chunksCount += len(g.chunks)
 		}
-		populatedChks := nextSet.newSeriesAggrChunkSlice(totalChunks)
+		populatedChks := nextSet.newSeriesAggrChunkSlice(chunksCount)
 		nextSet.series[i].chks = populatedChks
 		populatedChksCount := 0
 		for j, g := range unloadedS.groups {
 			groupChunks := populatedChks[populatedChksCount : populatedChksCount+len(g.chunks)]
+
 			for k, c := range g.chunks {
 				groupChunks[k].MinTime = c.minTime
 				groupChunks[k].MaxTime = c.maxTime
-				groupChunks[k].Raw = &storepb.Chunk{} // TODO should we do this or does it come as initialized?
+				if groupChunks[k].Raw == nil {
+					// This may come as initialized from the pool. Do an allocation only if it already isn't.
+					groupChunks[k].Raw = &storepb.Chunk{}
+				}
 			}
+
 			ok, lastChkLen, err := parseGroup(loadedGroups[currentGroupIdx], groupChunks)
 			if err != nil {
-				return nil, fmt.Errorf("%w: parsing chunk group (block %s, frist ref %d)", err, g.blockID, g.firstRef())
+				return nil, fmt.Errorf("parsing chunk group (block %s, first ref %d, num chunks %d): %w", g.blockID, g.firstRef(), len(g.chunks), err)
 			}
 			if !ok {
 				// We estimate the length of the last chunk of a series.
 				// Unfortunately, we got it wrong. We need to refetch the whole group.
+				// We set the length correctly because we now know it.
 				unloadedS.groups[j].chunks[len(unloadedS.groups[j].chunks)-1].length = lastChkLen
-				err = c.chunkReaders.addLoadGroup(g.blockID, unloadedS.groups[j], currentGroupIdx)
-				if err != nil {
-					return nil, errors.Wrap(err, "refetch chunks")
-				}
 				underfetchedGroups = append(underfetchedGroups, underfetchedGroupIdx{
 					seriesIdx:      i,
 					groupIdx:       j,
@@ -537,8 +550,8 @@ func (c *loadingSeriesChunksSetIterator) parseGroups(nextUnloaded seriesChunkRef
 	return underfetchedGroups, nil
 }
 
-// parseGroup parses the byte slice as concatenated encoded chunks. lastChunkLen is non-zero when allChunksComplete==false
-// The returned error indices poorly encoded group bytes.
+// parseGroup parses the byte slice as concatenated encoded chunks. lastChunkLen is non-zero when allChunksComplete==false.
+// An error is returned when gBytes are malformed or when not only the last chunk is incomplete.
 func parseGroup(gBytes []byte, chunks []storepb.AggrChunk) (allChunksComplete bool, lastChunkLen int64, _ error) {
 	for i := range chunks {
 		chunkDataLen, n := binary.Uvarint(gBytes)
@@ -565,7 +578,7 @@ func parseGroup(gBytes []byte, chunks []storepb.AggrChunk) (allChunksComplete bo
 		chunks[i].Raw.Type = storepb.Chunk_XOR
 		chunks[i].Raw.Data = c.Bytes()
 		// We ignore the crc32 because we assume that the chunk didn't get corrupted.
-		// TODO maybe check every 1 in 100 chunks? 1 in 1000?
+		// TODO maybe check the crc for every 1 in 100 chunks? 1 in 1000?
 		gBytes = gBytes[totalChunkLen:]
 	}
 	return true, 0, nil

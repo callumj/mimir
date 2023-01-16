@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sort"
 	"time"
@@ -281,7 +282,7 @@ func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error
 		}
 	}
 	if maxLen == 0 {
-		// If there was only one groups for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
+		// If there was only one group for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
 		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two
 		// This case should be very rare.
 		maxLen = mimir_tsdb.EstimatedMaxChunkSize / 2
@@ -359,16 +360,22 @@ func (r *bucketChunkGroupReader) loadGroupedChunks(ctx context.Context, res [][]
 		for readOffset < int(gr.offset) {
 			n, err := io.CopyN(io.Discard, bufReader, int64(gr.offset)-int64(readOffset))
 			if err != nil {
-				return errors.Wrap(err, "fast forward range reader")
+				return fmt.Errorf("fast forward range reader (block %s segment %d offset %d read offset %d): %w", r.block.meta.ULID, seq, gr.offset, readOffset, err)
 			}
 			readOffset += int(n)
 		}
 		estGroupLen := int(gr.estLen)
+		if i+1 < len(groups) {
+			if diff := groups[i+1].offset - gr.offset; int(diff) < estGroupLen {
+				// Sometimes a group with estimated length will overlap with the next chunk.
+				estGroupLen = int(diff)
+			}
+		}
 		groupBuf := chunksPool.Get(estGroupLen)
 		n, err := io.ReadFull(bufReader, groupBuf)
 		// EOF for last chunk could be a valid case. Any other errors are definitely unexpected.
 		if err != nil && !(errors.Is(err, io.ErrUnexpectedEOF) && i == len(groups)-1) {
-			return errors.Wrap(err, "read chunk group")
+			return fmt.Errorf("read chunk group (block %s segment %d offset %d read offset %d): %w", r.block.meta.ULID, seq, gr.offset, readOffset, err)
 		}
 		readOffset += n
 		res[gr.groupEntry] = groupBuf
