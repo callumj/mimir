@@ -447,7 +447,6 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	return true
 }
 
-// TODO dimitarvdimitrov add metric with the number of times we call this
 func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []underfetchedGroupIdx, nextUnloaded seriesChunkRefsSet, loadedGroups [][]byte, chunksPool *pool.SafeSlabPool[byte], nextSet seriesChunksSet) error {
 	c.refetches.Add(float64(len(underfetchedGroups)))
 	for _, g := range underfetchedGroups {
