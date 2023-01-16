@@ -33,8 +33,8 @@ type MemcachedChunksCache struct {
 	hits     prometheus.Counter
 }
 
-// NewMemcachedIndexCache makes a new MemcachedChunksCache.
-func NewMemcachedIndexCache(logger log.Logger, memcached cache.MemcachedClient, reg prometheus.Registerer) (*MemcachedChunksCache, error) {
+// NewMemcachedChunksCache makes a new MemcachedChunksCache.
+func NewMemcachedChunksCache(logger log.Logger, memcached cache.MemcachedClient, reg prometheus.Registerer) (*MemcachedChunksCache, error) {
 	c := &MemcachedChunksCache{
 		logger:    logger,
 		memcached: memcached,

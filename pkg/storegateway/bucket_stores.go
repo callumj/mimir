@@ -87,7 +87,7 @@ type BucketStores struct {
 
 // NewBucketStores makes a new BucketStores.
 func NewBucketStores(cfg tsdb.BlocksStorageConfig, shardingStrategy ShardingStrategy, bucketClient objstore.Bucket, limits *validation.Overrides, logLevel logging.Level, logger log.Logger, reg prometheus.Registerer) (*BucketStores, error) {
-	cachingBucket, err := tsdb.CreateCachingBucket(cfg.BucketStore.ChunksCache, cfg.BucketStore.MetadataCache, bucketClient, logger, reg)
+	cachingBucket, err := tsdb.CreateCachingBucket(cfg.BucketStore.MetadataCache, bucketClient, logger, reg)
 	if err != nil {
 		return nil, errors.Wrapf(err, "create caching bucket")
 	}
@@ -144,7 +144,11 @@ func NewBucketStores(cfg tsdb.BlocksStorageConfig, shardingStrategy ShardingStra
 	if u.indexCache, err = tsdb.NewIndexCache(cfg.BucketStore.IndexCache, logger, reg); err != nil {
 		return nil, errors.Wrap(err, "create index cache")
 	}
-	// TODO dimitarvdimitrov add chunks cache to bucket store
+
+	if u.chunksCache, err = tsdb.NewChunksCache(cfg.BucketStore.ChunksCache, logger, reg); err != nil {
+		return nil, errors.Wrap(err, "create chunks cache")
+	}
+
 	// Init the chunks bytes pool.
 	if u.chunksPool, err = newChunkBytesPool(cfg.BucketStore.ChunkPoolMinBucketSizeBytes, cfg.BucketStore.ChunkPoolMaxBucketSizeBytes, cfg.BucketStore.MaxChunkPoolBytes, reg); err != nil {
 		return nil, errors.Wrap(err, "create chunks bytes pool")
