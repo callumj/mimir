@@ -285,6 +285,7 @@ func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error
 		// If there was only one chunk for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
 		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two.
 		// This may happen for series with high churn, for example.
+		// TODO dimitarvdimitrov mimir_tsdb.EstimatedMaxChunkSize is too much, do some more research
 		maxLen = mimir_tsdb.EstimatedMaxChunkSize / 2
 	}
 	var totalLen int64
