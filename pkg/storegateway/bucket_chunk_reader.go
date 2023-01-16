@@ -282,16 +282,16 @@ func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error
 		}
 	}
 	if maxLen == 0 {
-		// If there was only one group for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
-		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two
-		// This case should be very rare.
+		// If there was only one chunk for this series, it's difficult to get its length, so we give a big estimation to avoid underfetching.
+		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two.
+		// This may happen for series with high churn, for example.
 		maxLen = mimir_tsdb.EstimatedMaxChunkSize / 2
 	}
 	var totalLen int64
 	for _, c := range g.chunks {
 		cLen := c.length
 		if cLen == 0 {
-			cLen = maxLen * 2 // we don't know how big this chunk is; we estimate it to be twice the biggest chunk we've seen for this seris
+			cLen = maxLen * 2 // we don't know how big this chunk is; we estimate it to be twice the biggest chunk we've seen for this series
 		}
 		totalLen += cLen
 	}
