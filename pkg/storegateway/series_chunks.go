@@ -479,12 +479,13 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 func removeNonRequestedChunks(chks []storepb.AggrChunk, minT, maxT int64) []storepb.AggrChunk {
 	writeIdx := 0
 	for i, chk := range chks {
-		if chk.MaxTime >= minT || chk.MinTime <= maxT {
-			if writeIdx != i {
-				chks[i], chks[writeIdx] = chks[writeIdx], chks[i]
-			}
-			writeIdx++
+		if chk.MaxTime < minT || chk.MinTime > maxT {
+			continue
 		}
+		if writeIdx != i {
+			chks[i], chks[writeIdx] = chks[writeIdx], chks[i]
+		}
+		writeIdx++
 	}
 
 	return chks[:writeIdx]

@@ -498,15 +498,21 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 		return toSeriesChunkRefsWithGroups(block, seriesIndex, 1)
 	}
 
+	filterAndCopyChunks := func(s seriesEntry, minT, maxT int64) seriesEntry {
+		filtered := make([]storepb.AggrChunk, len(s.chks))
+		copy(filtered, s.chks)
+		s.chks = removeNonRequestedChunks(filtered, minT, maxT)
+		return s
+	}
+
 	testCases := map[string]struct {
 		existingBlocks      []testBlock
 		setsToLoad          []seriesChunkRefsSet
 		expectedSets        []seriesChunksSet
+		minT, maxT          int64 // optional; if empty, select a wide time range
 		addLoadErr, loadErr error
 		expectedErr         string
 	}{
-		// TODO dimitarvdimitrov add tests with other mint/maxt
-
 		"loads single set from single block": {
 			existingBlocks: []testBlock{block1},
 			setsToLoad: []seriesChunkRefsSet{
@@ -523,6 +529,17 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			},
 			expectedSets: []seriesChunksSet{
 				{series: []seriesEntry{block1.series[0], block1.series[1]}},
+			},
+		},
+		"loads single set from single block with multiple groups with mint/maxt": {
+			existingBlocks: []testBlock{block1},
+			minT:           0,
+			maxT:           50,
+			setsToLoad: []seriesChunkRefsSet{
+				{series: []seriesChunkRefs{toSeriesChunkRefsWithGroups(block1, 0, 10), toSeriesChunkRefsWithGroups(block1, 1, 10)}},
+			},
+			expectedSets: []seriesChunksSet{
+				{series: []seriesEntry{filterAndCopyChunks(block1.series[0], 0, 50), filterAndCopyChunks(block1.series[1], 0, 50)}},
 			},
 		},
 		"loads multiple sets from single block": {
@@ -612,6 +629,25 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				}()},
 			},
 		},
+		"loads series with groups from different blocks and multiple groups with minT/maxT": {
+			existingBlocks: []testBlock{block1, block2},
+			minT:           0,
+			maxT:           10,
+			setsToLoad: []seriesChunkRefsSet{
+				{series: func() []seriesChunkRefs {
+					series := toSeriesChunkRefsWithGroups(block1, 0, 3)
+					series.groups = append(series.groups, toSeriesChunkRefsWithGroups(block2, 0, 4).groups...)
+					return []seriesChunkRefs{series}
+				}()},
+			},
+			expectedSets: []seriesChunksSet{
+				{series: func() []seriesEntry {
+					entry := block1.series[0]
+					entry.chks = append(entry.chks, block2.series[0].chks...)
+					return []seriesEntry{filterAndCopyChunks(entry, 0, 10)}
+				}()},
+			},
+		},
 		"handles error in addLoad": {
 			existingBlocks: []testBlock{block1, block2},
 			setsToLoad: []seriesChunkRefsSet{
@@ -649,8 +685,13 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			readers := newChunkGroupReaders(readersMap)
 			metrics := NewBucketStoreMetrics(nil)
 
+			minT, maxT := testCase.minT, testCase.maxT
+			if minT == 0 && maxT == 0 {
+				minT, maxT = 0, 100000 // select everything by default
+			}
+
 			// Run test
-			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), 0, 10000, metrics.chunksRefetches)
+			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), minT, maxT, metrics.chunksRefetches)
 			loadedSets := readAllSeriesChunksSets(set)
 
 			// Assertions
@@ -777,6 +818,88 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 					b.Fatalf("benchmark iterated through an unexpected number of groups (expected: %d got: %d)", expectedChunks, actualChunks)
 				}
 			}
+		})
+	}
+}
+
+func TestRemoveNonRequestedChunks(t *testing.T) {
+	testCases := map[string]struct {
+		input      []storepb.AggrChunk
+		minT, maxT int64
+
+		expected []storepb.AggrChunk
+	}{
+		"returns all chunks when they all fit in minT/maxT": {
+			input: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 0, maxT: 100,
+			expected: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+		},
+		"returns no chunks when none fit": {
+			input: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 1000, maxT: 100000,
+			expected: []storepb.AggrChunk{},
+		},
+		"returns some chunks when some fit on the edge": {
+			input: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 11, maxT: 20,
+			expected: []storepb.AggrChunk{
+				{MinTime: 11, MaxTime: 20},
+			},
+		},
+		"returns some chunks when some fit in the middle": {
+			input: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 15, maxT: 20,
+			expected: []storepb.AggrChunk{
+				{MinTime: 11, MaxTime: 20},
+			},
+		},
+		"returns some chunks when some partially overlap at the end": {
+			input: []storepb.AggrChunk{
+				{MinTime: 0, MaxTime: 10},
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 27, maxT: 40,
+			expected: []storepb.AggrChunk{
+				{MinTime: 21, MaxTime: 30},
+			},
+		},
+		"returns some chunks when some partially overlap in the beginning": {
+			input: []storepb.AggrChunk{
+				{MinTime: 11, MaxTime: 20},
+				{MinTime: 21, MaxTime: 30},
+			},
+			minT: 0, maxT: 12,
+			expected: []storepb.AggrChunk{
+				{MinTime: 11, MaxTime: 20},
+			},
+		},
+	}
+
+	for testName, testCase := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			actual := removeNonRequestedChunks(testCase.input, testCase.minT, testCase.maxT)
+			assert.Equal(t, testCase.expected, actual)
 		})
 	}
 }
