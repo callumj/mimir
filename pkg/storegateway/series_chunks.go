@@ -440,10 +440,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Since groups may contain more chunks that we need for the request,
 	// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
 	for i, s := range nextSet.series {
-		firstOverlappingIdx, lastOverlappingIdx, someOverlap := overlappingChunksIndices(s.chks, c.minTime, c.maxTime)
-		if someOverlap {
-			nextSet.series[i].chks = s.chks[firstOverlappingIdx : lastOverlappingIdx+1]
-		}
+		nextSet.series[i].chks = removeOverlappingChunks(s.chks, c.minTime, c.maxTime)
 	}
 
 	c.current = nextSet
@@ -479,19 +476,18 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 	return nil
 }
 
-func overlappingChunksIndices(chks []storepb.AggrChunk, minT, maxT int64) (int, int, bool) {
-	firstOverlappingIdx, lastOverlappingIdx := len(chks), 0
-	for j, chk := range chks {
+func removeOverlappingChunks(chks []storepb.AggrChunk, minT, maxT int64) []storepb.AggrChunk {
+	writeIdx := 0
+	for i, chk := range chks {
 		if chk.MaxTime >= minT || chk.MinTime <= maxT {
-			if firstOverlappingIdx > j {
-				firstOverlappingIdx = j
+			if writeIdx != i {
+				chks[i], chks[writeIdx] = chks[writeIdx], chks[i]
 			}
-			if lastOverlappingIdx < j {
-				lastOverlappingIdx = j
-			}
+			writeIdx++
 		}
 	}
-	return firstOverlappingIdx, lastOverlappingIdx, firstOverlappingIdx <= lastOverlappingIdx
+
+	return chks[:writeIdx]
 }
 
 func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet, cachedRanges map[chunkscache.Range][]byte, loadedGroups [][]byte) {
