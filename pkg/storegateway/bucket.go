@@ -131,7 +131,7 @@ type BucketStore struct {
 
 type noopCache struct{}
 
-func (noopCache) FetchMultiChunks(ctx context.Context, userID string, ranges ...chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
+func (noopCache) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
 	return nil, ranges
 }
 

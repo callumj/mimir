@@ -346,7 +346,8 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	}
 	loadedGroups := make([][]byte, totalGroups)
 	ranges := toCacheRanges(nextUnloaded.series, totalGroups)
-	cachedRanges, _ := c.cache.FetchMultiChunks(c.ctx, c.userID, ranges...)
+	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
+	cachedRanges, _ := c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, ranges...)
 	currentGroup := 0
 	for _, s := range nextUnloaded.series {
 		// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
@@ -367,7 +368,6 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	}
 
 	// Create a batched memory pool that can be released all at once.
-	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
 	err := c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
 	if err != nil {
 		c.err = errors.Wrap(err, "loading chunks")

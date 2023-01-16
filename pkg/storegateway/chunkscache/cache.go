@@ -5,6 +5,8 @@ import (
 
 	"github.com/oklog/ulid"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+
+	"github.com/grafana/mimir/pkg/util/pool"
 )
 
 type Range struct {
@@ -13,9 +15,8 @@ type Range struct {
 	NumChunks int // We are certain about the number of chunks, not about their total size
 }
 
-// TODO dimitarvdimitrov add inmemory and memcached implementation
 type ChunksCache interface {
-	FetchMultiChunks(ctx context.Context, userID string, ranges ...Range) (hits map[Range][]byte, misses []Range)
+	FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...Range) (hits map[Range][]byte, misses []Range)
 	StoreChunks(ctx context.Context, userID string, r Range, v []byte)
 }
 
@@ -29,7 +30,7 @@ func NewInmemoryChunksCache() ChunksCache {
 	}
 }
 
-func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, ranges ...Range) (hits map[Range][]byte, misses []Range) {
+func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges ...Range) (hits map[Range][]byte, misses []Range) {
 	hits = make(map[Range][]byte, len(ranges))
 	for i, r := range ranges {
 		if cached, ok := c.cached[userID][r]; ok {
