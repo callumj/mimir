@@ -4,14 +4,17 @@ package storegateway
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/oklog/ulid"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -488,6 +491,8 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 		addLoadErr, loadErr error
 		expectedErr         string
 	}{
+		// TODO dimitarvdimitrov add test cases with multiple groups
+		// TODO dimitarvdimitrov add tests with other mint/maxt
 		"loads single set from single block": {
 			existingBlocks: []testBlock{block1},
 			setsToLoad: []seriesChunkRefsSet{
@@ -588,12 +593,11 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			// Setup
 			readersMap := make(map[ulid.ULID]chunkGroupReader, len(testCase.existingBlocks))
 			for _, block := range testCase.existingBlocks {
-				readersMap[block.ulid] = newChunkReaderMockWithSeries(block.series, testCase.addLoadErr, testCase.loadErr)
+				readersMap[block.ulid] = newChunkReaderMockWithSeries(block.series, testCase.setsToLoad, testCase.addLoadErr, testCase.loadErr)
 			}
 			readers := newChunkGroupReaders(readersMap)
 
 			// Run test
-			// TODO dimitarvdimitrov add tests with other mint/maxt
 			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), 0, 10000)
 			loadedSets := readAllSeriesChunksSets(set)
 
@@ -628,10 +632,19 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				assert.Greater(t, chunkBytesSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
 			}
 			assert.Zero(t, chunkBytesSlicePool.(*pool.TrackedPool).Balance.Load())
+
 			assert.Zero(t, seriesEntrySlicePool.(*pool.TrackedPool).Balance.Load())
-			assert.Greater(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
+			if testCase.expectedErr != "" {
+				assert.Zero(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load())
+			} else {
+				assert.Greater(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
+			}
 			assert.Zero(t, seriesChunksSlicePool.(*pool.TrackedPool).Balance.Load())
-			assert.Greater(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
+			if testCase.expectedErr != "" {
+				assert.Zero(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load())
+			} else {
+				assert.Greater(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
+			}
 		})
 	}
 }
@@ -673,7 +686,7 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 
 			// Mock the chunk reader.
 			readersMap := map[ulid.ULID]chunkGroupReader{
-				blockID: newChunkReaderMockWithSeries(seriesEntries, nil, nil),
+				blockID: newChunkReaderMockWithSeries(seriesEntries, sets, nil, nil),
 			}
 
 			chunkReaders := newChunkGroupReaders(readersMap)
@@ -683,7 +696,6 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 
 			for n := 0; n < b.N; n++ {
 				batchSize := numSeriesPerSet
-				// TODO dimitarvdimitrov add tests with different minT/maxT
 				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, chunkscache.NewInmemoryChunksCache(), 0, 10000)
 
 				actualSeries := 0
@@ -717,65 +729,88 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 }
 
 type chunkReaderMock struct {
-	chunks              map[chunks.ChunkRef]storepb.AggrChunk
+	chunks              map[chunks.ChunkRef][]storepb.AggrChunk
 	addLoadErr, loadErr error
 
-	toLoad map[chunks.ChunkRef]loadIdx
+	toLoad map[chunks.ChunkRef]groupLoadIdx
 }
 
-func newChunkReaderMockWithSeries(series []seriesEntry, addLoadErr, loadErr error) *chunkReaderMock {
-	chks := map[chunks.ChunkRef]storepb.AggrChunk{}
-	for _, s := range series {
-		for i := range s.chks {
-			chks[s.refs[i]] = s.chks[i]
+// newChunkReaderMockWithSeries returns a chunksLoader that uses the groups in sets to
+func newChunkReaderMockWithSeries(existingChunks []seriesEntry, seriesSetWithGroups []seriesChunkRefsSet, addLoadErr, loadErr error) *chunkReaderMock {
+	storage := map[chunks.ChunkRef][]storepb.AggrChunk{}
+
+	// That many for loops will be slow if we have a lot of series/chunks,
+	// but it should keep test cases easier to write because they don't have to do the grouping there
+	for _, set := range seriesSetWithGroups {
+		for _, seriesWithGroups := range set.series {
+			for _, chksGroup := range seriesWithGroups.groups {
+				for _, chunkFromGroup := range chksGroup.chunks {
+					for _, series := range existingChunks {
+						for i, ungroupedRef := range series.refs {
+							if ungroupedRef == chunkFromGroup.ref {
+								storage[chksGroup.firstRef()] = append(storage[chksGroup.firstRef()], series.chks[i])
+							}
+						}
+					}
+				}
+			}
 		}
 	}
+
 	return &chunkReaderMock{
-		chunks:     chks,
+		chunks:     storage,
 		addLoadErr: addLoadErr,
 		loadErr:    loadErr,
-		toLoad:     make(map[chunks.ChunkRef]loadIdx),
+		toLoad:     make(map[chunks.ChunkRef]groupLoadIdx),
 	}
 }
 
 func (f *chunkReaderMock) addLoadGroup(g chunksGroup, groupEntry int) error {
-	// TODO dimitarvdimitrov implement these
-	panic("implement me")
+	if f.addLoadErr != nil {
+		return f.addLoadErr
+	}
+	f.toLoad[g.firstRef()] = groupLoadIdx{
+		groupEntry: groupEntry,
+	}
+	return nil
 }
 
 func (f *chunkReaderMock) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
-	// TODO dimitarvdimitrov implement these
-	panic("implement me")
+	if f.loadErr != nil {
+		return f.loadErr
+	}
+	for firstRef, idx := range f.toLoad {
+		encodedGroup := encodeGroup(f.chunks[firstRef])
+		// Take bytes from the pool, so we can assert on number of allocations and that frees are happening
+		copiedChunkData := chunksPool.Get(len(encodedGroup))
+		copy(copiedChunkData, encodedGroup)
+		res[idx.groupEntry] = copiedChunkData
+	}
+	return nil
+}
+
+// encodeGroup encodes each chunk in this format [len, encoding, data, crc32] and appends them to the out slice
+// The crc32 is not valid.
+func encodeGroup(aggrChunks []storepb.AggrChunk) (out []byte) {
+	for _, chk := range aggrChunks {
+		const uvarintMaxLen = 10
+
+		out = append(out, make([]byte, uvarintMaxLen)...)
+		lenUvarintBytes := binary.PutUvarint(out[len(out)-uvarintMaxLen:], uint64(len(chk.Raw.Data)))
+		out = out[:len(out)-uvarintMaxLen+lenUvarintBytes]
+		out = append(out, byte(chunkenc.EncXOR))
+		out = append(out, chk.Raw.Data...)
+		out = append(out, make([]byte, crc32.Size)...) // append a fake CRC32, because we don't use it
+	}
+	return
 }
 
 func (f *chunkReaderMock) Close() error {
 	return nil
 }
 
-func (f *chunkReaderMock) addLoad(id chunks.ChunkRef, seriesEntry, chunk int) error {
-	if f.addLoadErr != nil {
-		return f.addLoadErr
-	}
-	f.toLoad[id] = loadIdx{seriesEntry: seriesEntry, chunk: chunk}
-	return nil
-}
-
-func (f *chunkReaderMock) load(result []seriesEntry, chunksPool *pool.SafeSlabPool[byte], _ *safeQueryStats) error {
-	if f.loadErr != nil {
-		return f.loadErr
-	}
-	for chunkRef, indices := range f.toLoad {
-		// Take bytes from the pool, so we can assert on number of allocations and that frees are happening
-		chunkData := f.chunks[chunkRef].Raw.Data
-		copiedChunkData := chunksPool.Get(len(chunkData))
-		copy(copiedChunkData, chunkData)
-		result[indices.seriesEntry].chks[indices.chunk].Raw = &storepb.Chunk{Data: copiedChunkData}
-	}
-	return nil
-}
-
 func (f *chunkReaderMock) reset() {
-	f.toLoad = make(map[chunks.ChunkRef]loadIdx)
+	f.toLoad = make(map[chunks.ChunkRef]groupLoadIdx)
 }
 
 // generateSeriesEntriesWithChunks generates seriesEntries with groups. Each chunk is a random byte slice.
