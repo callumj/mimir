@@ -123,8 +123,6 @@ func CreateCachingBucket(metadataConfig MetadataCacheConfig, bkt objstore.Bucket
 	return bucketcache.NewCachingBucket(bkt, cfg, logger, reg)
 }
 
-var chunksMatcher = regexp.MustCompile(`^.*/chunks/\d+$`)
-
 func isMetaFile(name string) bool {
 	return strings.HasSuffix(name, "/"+metadata.MetaFilename) || strings.HasSuffix(name, "/"+metadata.DeletionMarkFilename) || strings.HasSuffix(name, "/"+TenantDeletionMarkPath)
 }
