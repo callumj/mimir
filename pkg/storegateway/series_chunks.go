@@ -440,7 +440,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Since groups may contain more chunks that we need for the request,
 	// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
 	for i, s := range nextSet.series {
-		nextSet.series[i].chks = removeOverlappingChunks(s.chks, c.minTime, c.maxTime)
+		nextSet.series[i].chks = removeNonRequestedChunks(s.chks, c.minTime, c.maxTime)
 	}
 
 	c.current = nextSet
@@ -476,7 +476,7 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 	return nil
 }
 
-func removeOverlappingChunks(chks []storepb.AggrChunk, minT, maxT int64) []storepb.AggrChunk {
+func removeNonRequestedChunks(chks []storepb.AggrChunk, minT, maxT int64) []storepb.AggrChunk {
 	writeIdx := 0
 	for i, chk := range chks {
 		if chk.MaxTime >= minT || chk.MinTime <= maxT {
