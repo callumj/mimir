@@ -123,13 +123,16 @@ func newMemcachedIndexCache(cfg cache.MemcachedConfig, logger log.Logger, regist
 }
 
 func NewChunksCache(cfg ChunksCacheConfig, logger log.Logger, reg prometheus.Registerer) (chunkscache.ChunksCache, error) {
-	if cfg.Backend != cache.BackendMemcached {
+	switch cfg.Backend {
+	case "":
+		return nil, nil
+	case cache.BackendMemcached:
+		client, err := cache.NewMemcachedClientWithConfig(logger, "chunks-cache", cfg.Memcached.ToMemcachedClientConfig(), prometheus.WrapRegistererWithPrefix("thanos_", reg))
+		if err != nil {
+			return nil, errors.Wrap(err, "create index cache memcached client")
+		}
+		return chunkscache.NewMemcachedChunksCache(logger, client, reg)
+	default:
 		return nil, errUnsupportedChunksCacheBackend
 	}
-
-	client, err := cache.NewMemcachedClientWithConfig(logger, "chunks-cache", cfg.Memcached.ToMemcachedClientConfig(), prometheus.WrapRegistererWithPrefix("thanos_", reg))
-	if err != nil {
-		return nil, errors.Wrap(err, "create index cache memcached client")
-	}
-	return chunkscache.NewMemcachedChunksCache(logger, client, reg)
 }
