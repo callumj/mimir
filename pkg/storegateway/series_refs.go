@@ -113,8 +113,7 @@ type seriesChunkRefs struct {
 type seriesChunkRef struct {
 	ref              chunks.ChunkRef
 	minTime, maxTime int64
-	// TODO dimitarvdimitrov change the type ofthis to uint64
-	length int64 // this will be 0 for the last chunk for a series because we don't know its length
+	length           int64 // this will be 0 for the last chunk for a series because we don't know its length
 }
 
 // Compare returns > 0 if m should be before other when sorting seriesChunkRef,

@@ -52,6 +52,8 @@ type BucketStoreMetrics struct {
 
 	iteratorLoadDurations  *prometheus.HistogramVec
 	expandPostingsDuration prometheus.Histogram
+
+	chunksRefetches prometheus.Counter
 }
 
 func NewBucketStoreMetrics(reg prometheus.Registerer) *BucketStoreMetrics {
@@ -189,6 +191,11 @@ func NewBucketStoreMetrics(reg prometheus.Registerer) *BucketStoreMetrics {
 		Name:    "cortex_bucket_store_expanded_postings_duration",
 		Help:    "The time it takes to get a list of all series that match the request matcher.",
 		Buckets: []float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120},
+	})
+
+	m.chunksRefetches = promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		Name: "cortex_bucket_store_chunk_refetches_total",
+		Help: "The number of individual chunks that had to be refetched because their size was underestimated.",
 	})
 
 	return &m

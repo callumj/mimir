@@ -596,9 +596,10 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				readersMap[block.ulid] = newChunkReaderMockWithSeries(block.series, testCase.setsToLoad, testCase.addLoadErr, testCase.loadErr)
 			}
 			readers := newChunkGroupReaders(readersMap)
+			metrics := NewBucketStoreMetrics(nil)
 
 			// Run test
-			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), 0, 10000)
+			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), 0, 10000, metrics.chunksRefetches)
 			loadedSets := readAllSeriesChunksSets(set)
 
 			// Assertions
@@ -691,12 +692,13 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 
 			chunkReaders := newChunkGroupReaders(readersMap)
 			stats := newSafeQueryStats()
+			metrics := NewBucketStoreMetrics(nil)
 
 			b.ResetTimer()
 
 			for n := 0; n < b.N; n++ {
 				batchSize := numSeriesPerSet
-				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, chunkscache.NewInmemoryChunksCache(), 0, 10000)
+				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, chunkscache.NewInmemoryChunksCache(), 0, 10000, metrics.chunksRefetches)
 
 				actualSeries := 0
 				actualChunks := 0

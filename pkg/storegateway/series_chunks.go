@@ -175,9 +175,20 @@ func newSeriesChunksSeriesSet(from seriesChunksSetIterator) storepb.SeriesSet {
 	}
 }
 
-func newSeriesSetWithChunks(ctx context.Context, userID string, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, iteratorLoadDurations *prometheus.HistogramVec, cache chunkscache.ChunksCache) storepb.SeriesSet {
+func newSeriesSetWithChunks(
+	ctx context.Context,
+	userID string,
+	chunkReaders bucketChunkReaders,
+	refsIterator seriesChunkRefsSetIterator,
+	refsIteratorBatchSize int,
+	stats *safeQueryStats,
+	iteratorLoadDurations *prometheus.HistogramVec,
+	cache chunkscache.ChunksCache,
+	minT, maxT int64,
+	m *BucketStoreMetrics,
+) storepb.SeriesSet {
 	var iterator seriesChunksSetIterator
-	iterator = newLoadingSeriesChunksSetIterator(ctx, userID, chunkReaders, refsIterator, refsIteratorBatchSize, stats, cache, 0, 0)
+	iterator = newLoadingSeriesChunksSetIterator(ctx, userID, chunkReaders, refsIterator, refsIteratorBatchSize, stats, cache, minT, maxT, m.chunksRefetches)
 	iterator = newDurationMeasuringIterator[seriesChunksSet](iterator, iteratorLoadDurations.WithLabelValues("chunks_load"))
 	iterator = newPreloadingSetIterator[seriesChunksSet](ctx, 1, iterator)
 	// We are measuring the time we wait for a preloaded batch. In an ideal world this is 0 because there's always a preloaded batch waiting.
@@ -307,10 +318,23 @@ type loadingSeriesChunksSetIterator struct {
 	err     error
 	minTime int64
 	maxTime int64
+
+	refetches prometheus.Counter
 }
 
 // TODO dimitarvdimitrov add/update tests with the chunks cache
-func newLoadingSeriesChunksSetIterator(ctx context.Context, userID string, chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats, cache chunkscache.ChunksCache, minT int64, maxT int64) *loadingSeriesChunksSetIterator {
+func newLoadingSeriesChunksSetIterator(
+	ctx context.Context,
+	userID string,
+	chunkReaders bucketChunkReaders,
+	from seriesChunkRefsSetIterator,
+	fromBatchSize int,
+	stats *safeQueryStats,
+	cache chunkscache.ChunksCache,
+	minT int64,
+	maxT int64,
+	refetches prometheus.Counter,
+) *loadingSeriesChunksSetIterator {
 	return &loadingSeriesChunksSetIterator{
 		ctx:           ctx,
 		userID:        userID,
@@ -321,6 +345,7 @@ func newLoadingSeriesChunksSetIterator(ctx context.Context, userID string, chunk
 		cache:         cache,
 		minTime:       minT,
 		maxTime:       maxT,
+		refetches:     refetches,
 	}
 }
 
