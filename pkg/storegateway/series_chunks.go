@@ -454,7 +454,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []underfetchedGroupIdx, nextUnloaded seriesChunkRefsSet, loadedGroups [][]byte, chunksPool *pool.SafeSlabPool[byte], nextSet seriesChunksSet) error {
 	c.refetches.Add(float64(len(underfetchedGroups)))
 	for _, g := range underfetchedGroups {
-		err := c.chunkReaders.addLoadGroup(g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx], g.groupIdx)
+		err := c.chunkReaders.addLoadGroup(g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx], g.loadedGroupIdx)
 		if err != nil {
 			return fmt.Errorf("add load underfetched block %s first ref %d: %w", g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx].firstRef(), err)
 		}
