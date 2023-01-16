@@ -455,7 +455,7 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 	for _, g := range underfetchedGroups {
 		err := c.chunkReaders.addLoadGroup(g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx], g.groupIdx)
 		if err != nil {
-			return fmt.Errorf("%w: add load underfetched block %s first ref %d", err, g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx].firstRef())
+			return fmt.Errorf("add load underfetched block %s first ref %d: %w", g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx].firstRef(), err)
 		}
 	}
 
