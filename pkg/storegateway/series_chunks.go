@@ -480,10 +480,10 @@ func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []unde
 		groupChunksCount := len(group.chunks)
 		ok, lastChkLen, err := parseGroup(series.rawGroups[idx.groupIdx], series.parsedChunks[idx.firstChkIdx:idx.firstChkIdx+groupChunksCount])
 		if err != nil {
-			return errors.Wrap(err, "parsing underfetched group")
+			return fmt.Errorf("parsing underfetched group (block %s first ref %d): %w", idx.blockID, group.firstRef(), err)
 		}
 		if !ok {
-			return fmt.Errorf("chunk length doesn't match after refetching (lastChkLen %d, lset %s, group index %d)", lastChkLen, nextSet.series[idx.seriesIdx].lset, idx.groupIdx)
+			return fmt.Errorf("chunk length doesn't match after refetching (lastChkLen %d, lset %s, first ref %d)", lastChkLen, nextSet.series[idx.seriesIdx].lset, group.firstRef())
 		}
 	}
 	return nil

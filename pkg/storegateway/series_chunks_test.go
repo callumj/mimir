@@ -490,12 +490,12 @@ func (b testBlock) toSeriesChunkRefs(seriesIndex int) seriesChunkRefs {
 func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 	block1 := testBlock{
 		ulid:   ulid.MustNew(1, nil),
-		series: generateSeriesEntriesWithChunks(t, 10),
+		series: generateSeriesEntries(t, 10),
 	}
 
 	block2 := testBlock{
 		ulid:   ulid.MustNew(2, nil),
-		series: generateSeriesEntriesWithChunks(t, 10),
+		series: generateSeriesEntries(t, 10),
 	}
 
 	filterAndCopyChunks := func(s seriesEntry, minT, maxT int64) seriesEntry {
@@ -984,9 +984,7 @@ func (f *chunkReaderMock) reset() {
 }
 
 // generateSeriesEntriesWithChunks generates seriesEntries with groups. Each chunk is a random byte slice.
-func generateSeriesEntriesWithChunks(t *testing.T, numSeries int) []seriesEntry {
-	const numChunksPerSeries = 50
-
+func generateSeriesEntriesWithChunks(t *testing.T, numSeries, numChunksPerSeries int) []seriesEntry {
 	out := make([]seriesEntry, 0, numSeries)
 	labels := generateSeries([]int{numSeries})
 
@@ -1013,6 +1011,11 @@ func generateSeriesEntriesWithChunks(t *testing.T, numSeries int) []seriesEntry 
 		out = append(out, entry)
 	}
 	return out
+}
+
+// generateSeriesEntries generates seriesEntries with groups. Each chunk is a random byte slice.
+func generateSeriesEntries(t *testing.T, numSeries int) []seriesEntry {
+	return generateSeriesEntriesWithChunks(t, numSeries, 50)
 }
 
 // sliceSeriesChunksSetIterator implements seriesChunksSetIterator and

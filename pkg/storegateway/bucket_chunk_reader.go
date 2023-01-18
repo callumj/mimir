@@ -464,7 +464,7 @@ func (r bucketChunkReaders) loadGroups(partialSeries []partialSeriesChunksSet, c
 }
 
 // reset the chunks scheduled for loading.
-func (r *bucketChunkReaders) reset() {
+func (r bucketChunkReaders) reset() {
 	for _, reader := range r.readers {
 		reader.reset()
 	}
