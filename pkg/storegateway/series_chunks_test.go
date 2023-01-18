@@ -691,7 +691,7 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			}
 
 			// Run test
-			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), chunkscache.NewInmemoryChunksCache(), minT, maxT, metrics.chunksRefetches)
+			set := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), newInmemoryChunksCache(), minT, maxT, metrics.chunksRefetches)
 			loadedSets := readAllSeriesChunksSets(set)
 
 			// Assertions
@@ -790,7 +790,7 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 
 			for n := 0; n < b.N; n++ {
 				batchSize := numSeriesPerSet
-				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, chunkscache.NewInmemoryChunksCache(), 0, 10000, metrics.chunksRefetches)
+				it := newLoadingSeriesChunksSetIterator(context.Background(), "tenant", *chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, newInmemoryChunksCache(), 0, 10000, metrics.chunksRefetches)
 
 				actualSeries := 0
 				actualChunks := 0
@@ -1143,4 +1143,35 @@ func readAllSeriesLabels(it storepb.SeriesSet) []labels.Labels {
 		out = append(out, lbls)
 	}
 	return out
+}
+
+type inMemory struct {
+	cached map[string]map[chunkscache.Range][]byte
+}
+
+func newInmemoryChunksCache() chunkscache.ChunksCache {
+	return &inMemory{
+		cached: map[string]map[chunkscache.Range][]byte{},
+	}
+}
+
+func (c *inMemory) FetchMultiChunks(_ context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
+	hits = make(map[chunkscache.Range][]byte, len(ranges))
+	for i, r := range ranges {
+		if cached, ok := c.cached[userID][r]; ok {
+			pooled := bytesPool.Get(len(cached))
+			copy(pooled, cached)
+			hits[r] = pooled
+		} else {
+			misses = append(misses, ranges[i])
+		}
+	}
+	return
+}
+
+func (c *inMemory) StoreChunks(_ context.Context, userID string, r chunkscache.Range, v []byte) {
+	if c.cached[userID] == nil {
+		c.cached[userID] = make(map[chunkscache.Range][]byte)
+	}
+	c.cached[userID][r] = v
 }
