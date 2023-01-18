@@ -233,7 +233,8 @@ type groupLoadIdx struct {
 	offset uint32
 	estLen int64
 	// Indices, not actual entries and groups.
-	groupEntry int
+	seriesEntry int
+	groupEntry  int
 }
 
 type bucketChunkGroupReader struct {
@@ -262,7 +263,7 @@ func (r *bucketChunkGroupReader) reset() {
 	}
 }
 
-func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEntry int, length int64) error {
+func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEntry, groupEntry int, length int64) error {
 	var (
 		seq = chunkSegmentFile(id)
 		off = chunkOffset(id)
@@ -270,11 +271,11 @@ func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEnt
 	if seq >= len(r.toLoad) {
 		return errors.Errorf("reference sequence %d out of range", seq)
 	}
-	r.toLoad[seq] = append(r.toLoad[seq], groupLoadIdx{offset: off, groupEntry: seriesEntry, estLen: length})
+	r.toLoad[seq] = append(r.toLoad[seq], groupLoadIdx{offset: off, seriesEntry: seriesEntry, groupEntry: groupEntry, estLen: length})
 	return nil
 }
 
-func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error {
+func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, seriesEntry, groupEntry int) error {
 	var maxLen int64
 	for _, c := range g.chunks {
 		if c.length > maxLen {
@@ -296,14 +297,14 @@ func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, groupIdx int) error
 		}
 		totalLen += cLen
 	}
-	if err := r.addLoadWithLength(g.firstRef(), groupIdx, totalLen); err != nil {
+	if err := r.addLoadWithLength(g.firstRef(), seriesEntry, groupEntry, totalLen); err != nil {
 		return err
 	}
 	return nil
 }
 
 // load all added groups and saves resulting groups to res.
-func (r *bucketChunkGroupReader) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+func (r *bucketChunkGroupReader) loadGroups(partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
 	g, ctx := errgroup.WithContext(r.ctx)
 
 	for seq, pIdxs := range r.toLoad {
@@ -319,7 +320,7 @@ func (r *bucketChunkGroupReader) loadGroups(res [][]byte, chunksPool *pool.SafeS
 			p := p
 			indices := pIdxs[p.ElemRng[0]:p.ElemRng[1]]
 			g.Go(func() error {
-				return r.loadGroupedChunks(ctx, res, seq, p, indices, chunksPool, stats)
+				return r.loadGroupedChunks(ctx, partialSeries, seq, p, indices, chunksPool, stats)
 			})
 		}
 	}
@@ -333,7 +334,7 @@ func (r *bucketChunkGroupReader) loadGroups(res [][]byte, chunksPool *pool.SafeS
 // passed to multiple concurrent invocations. However, this shouldn't require a mutex
 // because part and pIdxs is only read, and different calls are expected to write to
 // different groups in the res.
-func (r *bucketChunkGroupReader) loadGroupedChunks(ctx context.Context, res [][]byte, seq int, part Part, groups []groupLoadIdx, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+func (r *bucketChunkGroupReader) loadGroupedChunks(ctx context.Context, partialSeries []partialSeriesChunksSet, seq int, part Part, groups []groupLoadIdx, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
 	fetchBegin := time.Now()
 
 	// Get a reader for the required range.
@@ -379,7 +380,7 @@ func (r *bucketChunkGroupReader) loadGroupedChunks(ctx context.Context, res [][]
 			return fmt.Errorf("read chunk group (block %s segment %d offset %d read offset %d): %w", r.block.meta.ULID, seq, gr.offset, readOffset, err)
 		}
 		readOffset += n
-		res[gr.groupEntry] = groupBuf
+		partialSeries[gr.seriesEntry].rawGroups[gr.groupEntry] = groupBuf
 		localStats.chunksTouched++
 		localStats.chunksTouchedSizeSum += estGroupLen
 	}
@@ -429,8 +430,8 @@ type chunkReader interface {
 type chunkGroupReader interface {
 	io.Closer
 
-	addLoadGroup(g chunksGroup, groupEntry int) error
-	loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error
+	addLoadGroup(g chunksGroup, seriesEntry, groupEntry int) error
+	loadGroups(partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error
 	reset()
 }
 
@@ -440,11 +441,11 @@ func newChunkGroupReaders(readersMap map[ulid.ULID]chunkGroupReader) *bucketChun
 	}
 }
 
-func (r bucketChunkReaders) addLoadGroup(blockID ulid.ULID, g chunksGroup, groupEntry int) error {
-	return r.readers[blockID].addLoadGroup(g, groupEntry)
+func (r bucketChunkReaders) addLoadGroup(blockID ulid.ULID, g chunksGroup, seriesEntry int, groupEntry int) error {
+	return r.readers[blockID].addLoadGroup(g, seriesEntry, groupEntry)
 }
 
-func (r bucketChunkReaders) loadGroups(entries [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+func (r bucketChunkReaders) loadGroups(partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
 	g := &errgroup.Group{}
 	for _, reader := range r.readers {
 		reader := reader
@@ -452,7 +453,7 @@ func (r bucketChunkReaders) loadGroups(entries [][]byte, chunksPool *pool.SafeSl
 			// We don't need synchronisation on the access to entries because each chunk in
 			// every series will be loaded by exactly one reader. Since the groups slices are already
 			// initialized to the correct length, they don't need to be resized and can just be accessed.
-			return reader.loadGroups(entries, chunksPool, stats)
+			return reader.loadGroups(partialSeries, chunksPool, stats)
 		})
 	}
 

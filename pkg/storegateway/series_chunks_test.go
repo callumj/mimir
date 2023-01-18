@@ -727,17 +727,10 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			assert.Zero(t, chunkBytesSlicePool.(*pool.TrackedPool).Balance.Load())
 
 			assert.Zero(t, seriesEntrySlicePool.(*pool.TrackedPool).Balance.Load())
-			if testCase.expectedErr != "" {
-				assert.Zero(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load())
-			} else {
-				assert.Greater(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
-			}
+			assert.Greater(t, seriesEntrySlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
+
 			assert.Zero(t, seriesChunksSlicePool.(*pool.TrackedPool).Balance.Load())
-			if testCase.expectedErr != "" {
-				assert.Zero(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load())
-			} else {
-				assert.Greater(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
-			}
+			assert.Greater(t, seriesChunksSlicePool.(*pool.TrackedPool).Gets.Load(), int64(0))
 		})
 	}
 }
@@ -941,17 +934,18 @@ func newChunkReaderMockWithSeries(existingChunks []seriesEntry, seriesSetWithGro
 	}
 }
 
-func (f *chunkReaderMock) addLoadGroup(g chunksGroup, groupEntry int) error {
+func (f *chunkReaderMock) addLoadGroup(g chunksGroup, seriesEntry int, groupEntry int) error {
 	if f.addLoadErr != nil {
 		return f.addLoadErr
 	}
 	f.toLoad[g.firstRef()] = groupLoadIdx{
-		groupEntry: groupEntry,
+		seriesEntry: seriesEntry,
+		groupEntry:  groupEntry,
 	}
 	return nil
 }
 
-func (f *chunkReaderMock) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error {
+func (f *chunkReaderMock) loadGroups(partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], _ *safeQueryStats) error {
 	if f.loadErr != nil {
 		return f.loadErr
 	}
@@ -960,7 +954,7 @@ func (f *chunkReaderMock) loadGroups(res [][]byte, chunksPool *pool.SafeSlabPool
 		// Take bytes from the pool, so we can assert on number of allocations and that frees are happening
 		copiedChunkData := chunksPool.Get(len(encodedGroup))
 		copy(copiedChunkData, encodedGroup)
-		res[idx.groupEntry] = copiedChunkData
+		partialSeries[idx.seriesEntry].rawGroups[idx.groupEntry] = copiedChunkData
 	}
 	return nil
 }

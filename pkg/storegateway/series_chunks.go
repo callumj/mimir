@@ -303,6 +303,12 @@ func (p *preloadingSetIterator[Set]) Err() error {
 	return p.err
 }
 
+type partialSeriesChunksSet struct {
+	groups       []chunksGroup
+	rawGroups    [][]byte
+	parsedChunks []storepb.AggrChunk
+}
+
 type loadingSeriesChunksSetIterator struct {
 	ctx    context.Context
 	userID string
@@ -322,7 +328,6 @@ type loadingSeriesChunksSetIterator struct {
 	refetches prometheus.Counter
 }
 
-// TODO dimitarvdimitrov add/update tests with the chunks cache
 func newLoadingSeriesChunksSetIterator(
 	ctx context.Context,
 	userID string,
@@ -363,51 +368,16 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 
 	// This data structure doesn't retain the seriesChunkRefsSet so it can be released once done.
 	defer nextUnloaded.release()
+	defer c.chunkReaders.reset()
 
-	c.chunkReaders.reset()
-	groupCount := 0
-	for _, s := range nextUnloaded.series {
-		groupCount += len(s.groups)
-	}
-	loadedGroups := make([][]byte, groupCount)
-
-	// Create a batched memory pool that can be released all at once. We keep all chunks bytes there.
 	chunksPool := pool.NewSafeSlabPool[byte](chunkBytesSlicePool, chunkBytesSlabSize)
-	var cachedRanges map[chunkscache.Range][]byte
-	if c.cache != nil {
-		cachedRanges, _ = c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, toCacheRanges(nextUnloaded.series, groupCount))
-	}
-
-	// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
-	currentGroup := 0
-	for _, s := range nextUnloaded.series {
-		for _, group := range s.groups {
-			cacheRange := toChunkRange(group)
-			if cachedBytes, ok := cachedRanges[cacheRange]; ok {
-				loadedGroups[currentGroup] = cachedBytes
-				currentGroup++
-				continue
-			}
-			err := c.chunkReaders.addLoadGroup(group.blockID, group, currentGroup)
-			if err != nil {
-				c.err = errors.Wrap(err, "preloading chunks")
-				return false
-			}
-			currentGroup++
-		}
-	}
-
-	err := c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
-	if err != nil {
-		c.err = errors.Wrap(err, "loading chunks")
-		return false
-	}
-
-	c.chunkReaders.reset()
 	// Pre-allocate the series slice using the expected batchSize even if nextUnloaded has less elements,
 	// so that there's a higher chance the slice will be reused once released.
 	nextSet := newSeriesChunksSet(util_math.Max(c.fromBatchSize, nextUnloaded.len()), true)
 	nextSet.chunksReleaser = chunksPool
+	// The series slice is guaranteed to have at least the requested capacity,
+	// so can safely expand it.
+	nextSet.series = nextSet.series[:nextUnloaded.len()]
 
 	// Release the set if an error occurred.
 	defer func() {
@@ -416,60 +386,104 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		}
 	}()
 
-	// The series slice is guaranteed to have at least the requested capacity,
-	// so can safely expand it.
-	nextSet.series = nextSet.series[:nextUnloaded.len()]
+	partialSeries := make([]partialSeriesChunksSet, len(nextUnloaded.series))
+
+	totalGroups := 0
+	for i, s := range nextUnloaded.series {
+		numGroups := len(s.groups)
+		totalGroups += numGroups
+
+		partialSeries[i].groups = s.groups
+		partialSeries[i].rawGroups = make([][]byte, numGroups)
+		chunksCount := 0
+		for _, g := range s.groups {
+			chunksCount += len(g.chunks)
+		}
+		partialSeries[i].parsedChunks = nextSet.newSeriesAggrChunkSlice(chunksCount)
+	}
+
+	// Create a batched memory pool that can be released all at once. We keep all chunks bytes there.
+	var cachedRanges map[chunkscache.Range][]byte
+	if c.cache != nil {
+		cachedRanges, _ = c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, toCacheRanges(nextUnloaded.series, totalGroups))
+	}
+
+	// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.
+	for sIdx, s := range partialSeries {
+		for i, group := range s.groups {
+			if cachedBytes, ok := cachedRanges[toChunkRange(group)]; ok {
+				s.rawGroups[i] = cachedBytes
+				continue
+			}
+			err := c.chunkReaders.addLoadGroup(group.blockID, group, sIdx, i)
+			if err != nil {
+				c.err = errors.Wrap(err, "preloading chunks")
+				return false
+			}
+		}
+	}
+
+	err := c.chunkReaders.loadGroups(partialSeries, chunksPool, c.stats)
+	if err != nil {
+		c.err = errors.Wrap(err, "loading chunks")
+		return false
+	}
 
 	// Parse the bytes we have from the cache or the bucket. This returns the groups for which we didn't have
 	// enough fetched bytes. This may happen when the group length was underestimated.
-	underfetchedGroups, err := c.parseGroups(nextUnloaded, &nextSet, loadedGroups)
+	underfetchedGroups, err := c.parseGroups(partialSeries)
 	if err != nil {
 		c.err = err
 		return false
 	}
 	if len(underfetchedGroups) > 0 {
-		err = c.refetchGroups(underfetchedGroups, nextUnloaded, loadedGroups, chunksPool, nextSet)
+		c.chunkReaders.reset()
+		err = c.refetchGroups(underfetchedGroups, partialSeries, chunksPool, nextSet)
 		if err != nil {
 			c.err = err
 			return false
 		}
 	}
 
-	c.storeChunkGroups(nextUnloaded, cachedRanges, loadedGroups)
+	if c.cache != nil {
+		c.storeChunkGroups(cachedRanges, partialSeries)
+	}
 
-	// Since groups may contain more chunks that we need for the request,
-	// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
-	for i, s := range nextSet.series {
-		nextSet.series[i].chks = removeNonRequestedChunks(s.chks, c.minTime, c.maxTime)
+	for i, s := range partialSeries {
+		// Since groups may contain more chunks that we need for the request,
+		// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
+		nextSet.series[i].chks = removeNonRequestedChunks(s.parsedChunks, c.minTime, c.maxTime)
+		nextSet.series[i].lset = nextUnloaded.series[i].lset
 	}
 
 	c.current = nextSet
 	return true
 }
 
-func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []underfetchedGroupIdx, nextUnloaded seriesChunkRefsSet, loadedGroups [][]byte, chunksPool *pool.SafeSlabPool[byte], nextSet seriesChunksSet) error {
+func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []underfetchedGroupIdx, partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], nextSet seriesChunksSet) error {
 	c.refetches.Add(float64(len(underfetchedGroups)))
 	for _, g := range underfetchedGroups {
-		err := c.chunkReaders.addLoadGroup(g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx], g.loadedGroupIdx)
+		err := c.chunkReaders.addLoadGroup(g.blockID, partialSeries[g.seriesIdx].groups[g.groupIdx], g.seriesIdx, g.groupIdx)
 		if err != nil {
-			return fmt.Errorf("add load underfetched block %s first ref %d: %w", g.blockID, nextUnloaded.series[g.seriesIdx].groups[g.groupIdx].firstRef(), err)
+			return fmt.Errorf("add load underfetched block %s first ref %d: %w", g.blockID, partialSeries[g.seriesIdx].groups[g.groupIdx].firstRef(), err)
 		}
 	}
 
 	// Go back to the bucket to fetch anything we undefetched.
-	err := c.chunkReaders.loadGroups(loadedGroups, chunksPool, c.stats)
+	err := c.chunkReaders.loadGroups(partialSeries, chunksPool, c.stats)
 	if err != nil {
 		return errors.Wrap(err, "refetch groups")
 	}
-	for _, indices := range underfetchedGroups {
-		populatedChks := nextSet.series[indices.seriesIdx].chks
-		groupChunksCount := len(nextUnloaded.series[indices.seriesIdx].groups[indices.groupIdx].chunks)
-		ok, lastChkLen, err := parseGroup(loadedGroups[indices.loadedGroupIdx], populatedChks[indices.firstChkIdx:indices.firstChkIdx+groupChunksCount])
+	for _, idx := range underfetchedGroups {
+		series := partialSeries[idx.seriesIdx]
+		group := series.groups[idx.groupIdx]
+		groupChunksCount := len(group.chunks)
+		ok, lastChkLen, err := parseGroup(series.rawGroups[idx.groupIdx], series.parsedChunks[idx.firstChkIdx:idx.firstChkIdx+groupChunksCount])
 		if err != nil {
 			return errors.Wrap(err, "parsing underfetched group")
 		}
 		if !ok {
-			return fmt.Errorf("chunk length doesn't match after refetching (lastChkLen %d, lset %s, group index %d)", lastChkLen, nextSet.series[indices.seriesIdx].lset, indices.groupIdx)
+			return fmt.Errorf("chunk length doesn't match after refetching (lastChkLen %d, lset %s, group index %d)", lastChkLen, nextSet.series[idx.seriesIdx].lset, idx.groupIdx)
 		}
 	}
 	return nil
@@ -490,13 +504,11 @@ func removeNonRequestedChunks(chks []storepb.AggrChunk, minT, maxT int64) []stor
 	return chks[:writeIdx]
 }
 
-func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet, cachedRanges map[chunkscache.Range][]byte, loadedGroups [][]byte) {
-	if c.cache == nil {
-		return
-	}
+func (c *loadingSeriesChunksSetIterator) storeChunkGroups(cachedRanges map[chunkscache.Range][]byte, partialSeries []partialSeriesChunksSet) {
 	currentGroup := 0
-	for _, s := range set.series {
-		for _, g := range s.groups {
+	for _, s := range partialSeries {
+		for i, g := range s.groups {
+			rawG := s.rawGroups[i]
 			if _, ok := cachedRanges[toChunkRange(g)]; ok {
 				currentGroup++
 				continue
@@ -504,9 +516,9 @@ func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet
 			// This was parsed ok and we didn't get it from the cache, so we should cache it.
 			// TODO figure out how to release pooled bytes after they've been cached
 			// Doing a copy shouldn't be the end of the world provided there is some decent cache hit ratio
-			toCache := make([]byte, len(loadedGroups[currentGroup]))
+			toCache := make([]byte, len(rawG))
 			// Memcached caching is async, so we can't use the pooled bytes to send to memcached
-			copy(toCache, loadedGroups[currentGroup])
+			copy(toCache, rawG)
 			c.cache.StoreChunks(c.ctx, c.userID, toChunkRange(g), toCache)
 			currentGroup++
 		}
@@ -514,41 +526,34 @@ func (c *loadingSeriesChunksSetIterator) storeChunkGroups(set seriesChunkRefsSet
 }
 
 type underfetchedGroupIdx struct {
-	blockID        ulid.ULID
-	seriesIdx      int
-	groupIdx       int
-	firstChkIdx    int
-	loadedGroupIdx int
+	blockID     ulid.ULID
+	seriesIdx   int
+	groupIdx    int
+	firstChkIdx int
 }
 
 // parseGroups parses the passed bytes into nextSet. In case a group was underfetched, parseGroups will return an underfetchedGroupIdx
 // with the indices of the group; parseGroups will also set the correct length of the last chunk in the group
 // because it was the last chunk which was estimated.
-func (c *loadingSeriesChunksSetIterator) parseGroups(nextUnloaded seriesChunkRefsSet, nextSet *seriesChunksSet, loadedGroups [][]byte) ([]underfetchedGroupIdx, error) {
+func (c *loadingSeriesChunksSetIterator) parseGroups(partialSeries []partialSeriesChunksSet) ([]underfetchedGroupIdx, error) {
 	var underfetchedGroups []underfetchedGroupIdx
-	currentGroupIdx := 0
-	for i, unloadedS := range nextUnloaded.series {
-		nextSet.series[i].lset = unloadedS.lset
-		chunksCount := 0
-		for _, g := range unloadedS.groups {
-			chunksCount += len(g.chunks)
-		}
-		populatedChks := nextSet.newSeriesAggrChunkSlice(chunksCount)
-		nextSet.series[i].chks = populatedChks
-		populatedChksCount := 0
-		for j, g := range unloadedS.groups {
-			groupChunks := populatedChks[populatedChksCount : populatedChksCount+len(g.chunks)]
 
-			for k, c := range g.chunks {
-				groupChunks[k].MinTime = c.minTime
-				groupChunks[k].MaxTime = c.maxTime
-				if groupChunks[k].Raw == nil {
+	for sIdx, series := range partialSeries {
+		parsedChunksCount := 0
+		for gIdx, g := range series.groups {
+			rawGroup := series.rawGroups[gIdx]
+
+			for cIdx := parsedChunksCount; cIdx < parsedChunksCount+len(g.chunks); cIdx++ {
+				chunkWithinGroupIdx := cIdx - parsedChunksCount
+				series.parsedChunks[cIdx].MinTime = g.chunks[chunkWithinGroupIdx].minTime
+				series.parsedChunks[cIdx].MaxTime = g.chunks[chunkWithinGroupIdx].maxTime
+				if series.parsedChunks[cIdx].Raw == nil {
 					// This may come as initialized from the pool. Do an allocation only if it already isn't.
-					groupChunks[k].Raw = &storepb.Chunk{}
+					series.parsedChunks[cIdx].Raw = &storepb.Chunk{}
 				}
 			}
 
-			ok, lastChkLen, err := parseGroup(loadedGroups[currentGroupIdx], groupChunks)
+			ok, lastChunkLen, err := parseGroup(rawGroup, series.parsedChunks[parsedChunksCount:parsedChunksCount+len(g.chunks)])
 			if err != nil {
 				return nil, fmt.Errorf("parsing chunk group (block %s, first ref %d, num chunks %d): %w", g.blockID, g.firstRef(), len(g.chunks), err)
 			}
@@ -556,17 +561,16 @@ func (c *loadingSeriesChunksSetIterator) parseGroups(nextUnloaded seriesChunkRef
 				// We estimate the length of the last chunk of a series.
 				// Unfortunately, we got it wrong. We need to refetch the whole group.
 				// We set the length correctly because we now know it.
-				unloadedS.groups[j].chunks[len(unloadedS.groups[j].chunks)-1].length = lastChkLen
+				g.chunks[len(g.chunks)-1].length = lastChunkLen
 				underfetchedGroups = append(underfetchedGroups, underfetchedGroupIdx{
-					seriesIdx:      i,
-					groupIdx:       j,
-					firstChkIdx:    populatedChksCount,
-					loadedGroupIdx: currentGroupIdx,
-					blockID:        g.blockID,
+					blockID:     g.blockID,
+					seriesIdx:   sIdx,
+					groupIdx:    gIdx,
+					firstChkIdx: parsedChunksCount,
 				})
 			}
-			populatedChksCount += len(g.chunks)
-			currentGroupIdx++
+
+			parsedChunksCount += len(g.chunks)
 		}
 	}
 	return underfetchedGroups, nil
@@ -578,7 +582,7 @@ func parseGroup(gBytes []byte, chunks []storepb.AggrChunk) (allChunksComplete bo
 	for i := range chunks {
 		chunkDataLen, n := binary.Uvarint(gBytes)
 		if n == 0 {
-			return false, 0, fmt.Errorf("not enough bytes to infer length of chunk %d/%d", i, len(chunks))
+			return false, 0, fmt.Errorf("not enough bytes (%d) to infer length of chunk %d/%d", len(gBytes), i, len(chunks))
 		}
 		if n < 0 {
 			return false, 0, fmt.Errorf("chunk length doesn't fit into uint64 %d/%d", i, len(chunks))
