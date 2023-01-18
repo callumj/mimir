@@ -586,7 +586,7 @@ func TestBucketStore_e2e(t *testing.T) {
 		})
 
 		t.Run("with large, sufficient chunks cache", func(t *testing.T) {
-			chunksCache := chunkscache.NewInmemoryChunksCache()
+			chunksCache := newInmemoryChunksCache()
 			s.cache.SwapChunksCacheWith(chunksCache)
 			testBucketStore_e2e(t, ctx, s)
 		})
