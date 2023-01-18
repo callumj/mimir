@@ -505,22 +505,19 @@ func removeNonRequestedChunks(chks []storepb.AggrChunk, minT, maxT int64) []stor
 }
 
 func (c *loadingSeriesChunksSetIterator) storeChunkGroups(cachedRanges map[chunkscache.Range][]byte, partialSeries []partialSeriesChunksSet) {
-	currentGroup := 0
 	for _, s := range partialSeries {
 		for i, g := range s.groups {
-			rawG := s.rawGroups[i]
 			if _, ok := cachedRanges[toChunkRange(g)]; ok {
-				currentGroup++
 				continue
 			}
 			// This was parsed ok and we didn't get it from the cache, so we should cache it.
 			// TODO figure out how to release pooled bytes after they've been cached
 			// Doing a copy shouldn't be the end of the world provided there is some decent cache hit ratio
+			rawG := s.rawGroups[i]
 			toCache := make([]byte, len(rawG))
 			// Memcached caching is async, so we can't use the pooled bytes to send to memcached
 			copy(toCache, rawG)
 			c.cache.StoreChunks(c.ctx, c.userID, toChunkRange(g), toCache)
-			currentGroup++
 		}
 	}
 }

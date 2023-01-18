@@ -803,12 +803,12 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 	return true
 }
 
-// removeGroupsOutsideOfRange modifies groups inplace
+// removeGroupsOutsideOfRange modifies groups in place
 func removeGroupsOutsideOfRange(groups []seriesChunkRefsGroup, minTime, maxTime int64) []seriesChunkRefsGroup {
 	writeIdx := 0
 	for i, g := range groups {
 		if g.maxTime() < minTime || g.minTime() > maxTime {
-			groups[i] = seriesChunkRefsGroup{} // empty is so the groups in it can be garbage-collected
+			groups[i] = seriesChunkRefsGroup{} // empty it so the chunks in it can be garbage-collected
 			continue
 		}
 		groups[writeIdx], groups[i] = groups[i], groups[writeIdx]
