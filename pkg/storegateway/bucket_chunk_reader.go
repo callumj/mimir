@@ -275,7 +275,7 @@ func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEnt
 	return nil
 }
 
-func (r *bucketChunkGroupReader) addLoadGroup(g chunksGroup, seriesEntry, groupEntry int) error {
+func (r *bucketChunkGroupReader) addLoadGroup(g seriesChunkRefsGroup, seriesEntry, groupEntry int) error {
 	var maxLen int64
 	for _, c := range g.chunks {
 		if c.length > maxLen {
@@ -430,7 +430,7 @@ type chunkReader interface {
 type chunkGroupReader interface {
 	io.Closer
 
-	addLoadGroup(g chunksGroup, seriesEntry, groupEntry int) error
+	addLoadGroup(g seriesChunkRefsGroup, seriesEntry, groupEntry int) error
 	loadGroups(partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], stats *safeQueryStats) error
 	reset()
 }
@@ -441,7 +441,7 @@ func newChunkGroupReaders(readersMap map[ulid.ULID]chunkGroupReader) *bucketChun
 	}
 }
 
-func (r bucketChunkReaders) addLoadGroup(blockID ulid.ULID, g chunksGroup, seriesEntry int, groupEntry int) error {
+func (r bucketChunkReaders) addLoadGroup(blockID ulid.ULID, g seriesChunkRefsGroup, seriesEntry int, groupEntry int) error {
 	return r.readers[blockID].addLoadGroup(g, seriesEntry, groupEntry)
 }
 

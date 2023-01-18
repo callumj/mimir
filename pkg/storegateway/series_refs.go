@@ -106,7 +106,7 @@ func (b seriesChunkRefsSet) release() {
 // seriesChunkRefs holds a series with a list of chunk references.
 type seriesChunkRefs struct {
 	lset   labels.Labels
-	groups []chunksGroup
+	groups []seriesChunkRefsGroup
 }
 
 // seriesChunkRef holds the reference to a chunk in a given block.
@@ -403,7 +403,7 @@ func (s *mergedSeriesChunkRefsSet) nextUniqueEntry(a, b *seriesChunkRefsIterator
 
 	// Slice reuse is not generally safe with nested merge iterators.
 	// We err on the safe side and create a new slice.
-	toReturn.groups = make([]chunksGroup, 0, len(chksA)+len(chksB))
+	toReturn.groups = make([]seriesChunkRefsGroup, 0, len(chksA)+len(chksB))
 
 	bChunksOffset := 0
 Outer:
@@ -770,7 +770,7 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 			// This was a series without any chunks; we skip it
 			continue
 		}
-		var groups []chunksGroup
+		var groups []seriesChunkRefsGroup
 		if !s.skipChunks {
 			groups = partitionChunks(chks, s.blockID)
 			groups = removeGroupsOutsideOfRange(groups, s.minTime, s.maxTime)
@@ -804,11 +804,11 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 }
 
 // removeGroupsOutsideOfRange modifies groups inplace
-func removeGroupsOutsideOfRange(groups []chunksGroup, minTime, maxTime int64) []chunksGroup {
+func removeGroupsOutsideOfRange(groups []seriesChunkRefsGroup, minTime, maxTime int64) []seriesChunkRefsGroup {
 	writeIdx := 0
 	for i, g := range groups {
 		if g.maxTime() < minTime || g.minTime() > maxTime {
-			groups[i] = chunksGroup{} // empty is so the groups in it can be garbage-collected
+			groups[i] = seriesChunkRefsGroup{} // empty is so the groups in it can be garbage-collected
 			continue
 		}
 		groups[writeIdx], groups[i] = groups[i], groups[writeIdx]
@@ -817,12 +817,12 @@ func removeGroupsOutsideOfRange(groups []chunksGroup, minTime, maxTime int64) []
 	return groups[:writeIdx]
 }
 
-// partitionChunks creates a slice of chunksGroup for each groups of groups within the same segment file
-func partitionChunks(chks []seriesChunkRef, blockID ulid.ULID) []chunksGroup {
-	var groups []chunksGroup
+// partitionChunks creates a slice of seriesChunkRefsGroup for each groups of groups within the same segment file
+func partitionChunks(chks []seriesChunkRef, blockID ulid.ULID) []seriesChunkRefsGroup {
+	var groups []seriesChunkRefsGroup
 	for i := range chks {
 		if len(groups) == 0 || chunkSegmentFile(groups[len(groups)-1].lastRef()) != chunkSegmentFile(chks[i].ref) {
-			groups = append(groups, chunksGroup{blockID: blockID})
+			groups = append(groups, seriesChunkRefsGroup{blockID: blockID})
 		}
 		groups[len(groups)-1].chunks = append(groups[len(groups)-1].chunks, chks[i])
 	}

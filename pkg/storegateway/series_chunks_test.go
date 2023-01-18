@@ -456,7 +456,7 @@ type testBlock struct {
 func (b testBlock) toSeriesChunkRefsWithGroups(seriesIndex, numGroups int) seriesChunkRefs {
 	series := b.series[seriesIndex]
 
-	groups := make([]chunksGroup, numGroups)
+	groups := make([]seriesChunkRefsGroup, numGroups)
 	chunksPerGroup := len(series.refs) / numGroups
 	for i := range groups {
 		groups[i].blockID = b.ulid
@@ -1061,7 +1061,7 @@ func newChunkReaderMockWithSeries(existingChunks []seriesEntry, seriesSetWithGro
 	}
 }
 
-func (f *chunkReaderMock) addLoadGroup(g chunksGroup, seriesEntry int, groupEntry int) error {
+func (f *chunkReaderMock) addLoadGroup(g seriesChunkRefsGroup, seriesEntry int, groupEntry int) error {
 	if f.addLoadErr != nil {
 		return f.addLoadErr
 	}

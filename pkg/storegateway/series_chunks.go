@@ -304,7 +304,7 @@ func (p *preloadingSetIterator[Set]) Err() error {
 }
 
 type partialSeriesChunksSet struct {
-	groups       []chunksGroup
+	groups       []seriesChunkRefsGroup
 	rawGroups    [][]byte
 	parsedChunks []storepb.AggrChunk
 }
@@ -620,7 +620,7 @@ func toCacheRanges(series []seriesChunkRefs, totalRanges int) []chunkscache.Rang
 	return ranges
 }
 
-func toChunkRange(g chunksGroup) chunkscache.Range {
+func toChunkRange(g seriesChunkRefsGroup) chunkscache.Range {
 	return chunkscache.Range{
 		BlockID:   g.blockID,
 		Start:     g.firstRef(),

@@ -583,27 +583,27 @@ func (l *bucketIndexLoadedSeries) addSeries(ref storage.SeriesRef, data []byte) 
 	l.seriesMx.Unlock()
 }
 
-// chunksGroup contains chunks from the same block and the same segment file. They are ordered by their minTime
-type chunksGroup struct {
+// seriesChunkRefsGroup contains chunks from the same block and the same segment file. They are ordered by their minTime
+type seriesChunkRefsGroup struct {
 	blockID ulid.ULID
 	chunks  []seriesChunkRef
 }
 
-func (g chunksGroup) firstRef() chunks.ChunkRef {
+func (g seriesChunkRefsGroup) firstRef() chunks.ChunkRef {
 	if len(g.chunks) == 0 {
 		return chunks.ChunkRef(0)
 	}
 	return g.chunks[0].ref
 }
 
-func (g chunksGroup) lastRef() chunks.ChunkRef {
+func (g seriesChunkRefsGroup) lastRef() chunks.ChunkRef {
 	if len(g.chunks) == 0 {
 		return chunks.ChunkRef(0)
 	}
 	return g.chunks[len(g.chunks)-1].ref
 }
 
-func (g chunksGroup) minTime() int64 {
+func (g seriesChunkRefsGroup) minTime() int64 {
 	if len(g.chunks) == 0 {
 		return 0
 	}
@@ -611,7 +611,7 @@ func (g chunksGroup) minTime() int64 {
 	return g.chunks[0].minTime
 }
 
-func (g chunksGroup) maxTime() int64 {
+func (g seriesChunkRefsGroup) maxTime() int64 {
 	// Since chunks are only ordered by minTime, we have no guarantee for their maxTIme, so we need to iterate all.
 	var maxT int64
 	for _, c := range g.chunks {
@@ -622,7 +622,7 @@ func (g chunksGroup) maxTime() int64 {
 	return maxT
 }
 
-func (g chunksGroup) Compare(other chunksGroup) int {
+func (g seriesChunkRefsGroup) Compare(other seriesChunkRefsGroup) int {
 	if g.minTime() < other.minTime() {
 		return 1
 	}
