@@ -696,19 +696,114 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 				expectedErr:  "test err",
 			},
 		},
+		"only cache misses": {
+			// Load series 0 and 2
+			{
+				existingBlocks: []testBlock{block1, block2},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefs(0), block1.toSeriesChunkRefs(2)}},
+					{series: []seriesChunkRefs{block2.toSeriesChunkRefs(0), block2.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+					{series: []seriesEntry{block2.series[0], block2.series[2]}},
+				},
+			},
+			// Next load a different set of series (1 and 3)
+			{
+				existingBlocks: []testBlock{block1, block2},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefs(1), block1.toSeriesChunkRefs(3)}},
+					{series: []seriesChunkRefs{block2.toSeriesChunkRefs(1), block2.toSeriesChunkRefs(3)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[1], block1.series[3]}},
+					{series: []seriesEntry{block2.series[1], block2.series[3]}},
+				},
+			},
+		},
+		"skips cache chunks when there is a different number of chunks in the group": {
+			// Issue a request where the first series has its chunks only in two groups
+			{
+				existingBlocks: []testBlock{block1},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 2), block1.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+				},
+			},
+			// Issue a request where the first series has its chunks in 12 groups; it shouldn't interfere with the cache item from last request
+			{
+				existingBlocks: []testBlock{block1},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 12), block1.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+				},
+			},
+		},
+		"cache hits": {
+			// Issue a request
+			{
+				existingBlocks: []testBlock{block1},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 1), block1.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+				},
+			},
+			// Issue the same request; this time with an empty storage
+			{
+				existingBlocks: []testBlock{},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 1), block1.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+				},
+			},
+		},
+		"some cache hits, some misses": {
+			// First query only from block1
+			{
+				existingBlocks: []testBlock{block1},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 1), block1.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+				},
+			},
+			// Next query from block1 and block2 with only block2 available in the storage; chunks for block1 should be already cached
+			{
+				existingBlocks: []testBlock{block2},
+				setsToLoad: []seriesChunkRefsSet{
+					{series: []seriesChunkRefs{block1.toSeriesChunkRefsWithGroups(0, 1), block1.toSeriesChunkRefs(2)}},
+					{series: []seriesChunkRefs{block2.toSeriesChunkRefsWithGroups(0, 1), block2.toSeriesChunkRefs(2)}},
+				},
+				expectedSets: []seriesChunksSet{
+					{series: []seriesEntry{block1.series[0], block1.series[2]}},
+					{series: []seriesEntry{block2.series[0], block2.series[2]}},
+				},
+			},
+		},
 	}
 
 	for testName, testScenario := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			// Reset the memory pool tracker.
-			seriesEntrySlicePool.(*pool.TrackedPool).Reset()
-			seriesChunksSlicePool.(*pool.TrackedPool).Reset()
-			chunkBytesSlicePool.(*pool.TrackedPool).Reset()
+			// Reuse the cache between requests, so we can test caching too
 			cache := newInmemoryChunksCache()
 
-			// Setup
 			for _, testCase := range testScenario {
+				// Reset the memory pool tracker.
+				seriesEntrySlicePool.(*pool.TrackedPool).Reset()
+				seriesChunksSlicePool.(*pool.TrackedPool).Reset()
+				chunkBytesSlicePool.(*pool.TrackedPool).Reset()
 
+				// Setup
 				readersMap := make(map[ulid.ULID]chunkGroupReader, len(testCase.existingBlocks))
 				for _, block := range testCase.existingBlocks {
 					readersMap[block.ulid] = newChunkReaderMockWithSeries(block.series, testCase.setsToLoad, testCase.addLoadErr, testCase.loadErr)
