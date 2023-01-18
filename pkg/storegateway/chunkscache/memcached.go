@@ -55,7 +55,7 @@ func NewMemcachedChunksCache(logger log.Logger, memcached cache.MemcachedClient,
 	return c, nil
 }
 
-func (c *MemcachedChunksCache) FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []Range) (hits map[Range][]byte, misses []Range) {
+func (c *MemcachedChunksCache) FetchMultiChunks(ctx context.Context, userID string, ranges []Range, bytesPool *pool.SafeSlabPool[byte]) (hits map[Range][]byte, misses []Range) {
 	c.requests.Add(float64(len(ranges)))
 
 	keysMap := make(map[string]Range, len(ranges))

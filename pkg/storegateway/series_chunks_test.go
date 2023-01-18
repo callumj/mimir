@@ -1279,7 +1279,7 @@ func newInmemoryChunksCache() chunkscache.ChunksCache {
 	}
 }
 
-func (c *inMemory) FetchMultiChunks(_ context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []chunkscache.Range) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
+func (c *inMemory) FetchMultiChunks(ctx context.Context, userID string, ranges []chunkscache.Range, bytesPool *pool.SafeSlabPool[byte]) (hits map[chunkscache.Range][]byte, misses []chunkscache.Range) {
 	hits = make(map[chunkscache.Range][]byte, len(ranges))
 	for i, r := range ranges {
 		if cached, ok := c.cached[userID][r]; ok {

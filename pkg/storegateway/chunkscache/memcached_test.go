@@ -104,7 +104,7 @@ func TestMemcachedIndexCache_FetchMultiPostings(t *testing.T) {
 
 			// Fetch postings from cached and assert on it.
 			p := pool.NewSafeSlabPool[byte](&pool.TrackedPool{Parent: &sync.Pool{}}, 10000)
-			hits, misses := c.FetchMultiChunks(ctx, testData.fetchUserID, p, testData.fetchRanges)
+			hits, misses := c.FetchMultiChunks(ctx, testData.fetchUserID, testData.fetchRanges, p)
 			assert.Equal(t, testData.expectedHits, hits)
 			assert.Equal(t, testData.expectedMisses, misses)
 

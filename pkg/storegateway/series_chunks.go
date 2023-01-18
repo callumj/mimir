@@ -405,7 +405,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	// Create a batched memory pool that can be released all at once. We keep all chunks bytes there.
 	var cachedRanges map[chunkscache.Range][]byte
 	if c.cache != nil {
-		cachedRanges, _ = c.cache.FetchMultiChunks(c.ctx, c.userID, chunksPool, toCacheRanges(nextUnloaded.series, totalGroups))
+		cachedRanges, _ = c.cache.FetchMultiChunks(c.ctx, c.userID, toCacheRanges(nextUnloaded.series, totalGroups), chunksPool)
 	}
 
 	// Collect the cached groups bytes or prepare to fetch cache misses from the bucket.

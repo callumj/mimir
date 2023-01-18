@@ -18,6 +18,6 @@ type Range struct {
 }
 
 type ChunksCache interface {
-	FetchMultiChunks(ctx context.Context, userID string, bytesPool *pool.SafeSlabPool[byte], ranges []Range) (hits map[Range][]byte, misses []Range)
+	FetchMultiChunks(ctx context.Context, userID string, ranges []Range, bytesPool *pool.SafeSlabPool[byte]) (hits map[Range][]byte, misses []Range)
 	StoreChunks(ctx context.Context, userID string, r Range, v []byte)
 }
