@@ -275,6 +275,8 @@ func (r *bucketChunkGroupReader) addLoadWithLength(id chunks.ChunkRef, seriesEnt
 	return nil
 }
 
+const maxEstimatedLength = 16322
+
 func (r *bucketChunkGroupReader) addLoadGroup(g seriesChunkRefsGroup, seriesEntry, groupEntry int) error {
 	var maxLen int64
 	for _, c := range g.chunks {
@@ -287,7 +289,7 @@ func (r *bucketChunkGroupReader) addLoadGroup(g seriesChunkRefsGroup, seriesEntr
 		// It's half of mimir_tsdb.EstimatedMaxChunkSize because we will later multiply maxLen by two.
 		// This may happen for series with high churn, for example.
 		// TODO dimitarvdimitrov mimir_tsdb.EstimatedMaxChunkSize is too much, do some more research
-		maxLen = mimir_tsdb.EstimatedMaxChunkSize / 2
+		maxLen = maxEstimatedLength / 2
 	}
 	var totalLen int64
 	for _, c := range g.chunks {

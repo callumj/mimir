@@ -13,6 +13,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
@@ -328,6 +329,20 @@ type loadingSeriesChunksSetIterator struct {
 	refetches prometheus.Counter
 }
 
+var (
+	lengthEstimationMismatch = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_failed_chunks_length_estimation",
+		Buckets: []float64{ /* overestiamtion */ -100_000, -10_000, -1000, -100, -10, -0.9, 0 /*underestimations */, 10, 100, 1000, 10_000, 100_000},
+	})
+	defaultEstimationUsed = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "cortex_bucket_store_chunks_length_default_estimations_used_total",
+	})
+	selectedChunksPerGroup = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_selected_chunks_per_group",
+		Buckets: []float64{1, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 100},
+	})
+)
+
 func newLoadingSeriesChunksSetIterator(
 	ctx context.Context,
 	userID string,
@@ -453,6 +468,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		// Since groups may contain more chunks that we need for the request,
 		// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
 		nextSet.series[i].chks = removeNonRequestedChunks(s.parsedChunks, c.minTime, c.maxTime)
+		selectedChunksPerGroup.Observe(float64(len(nextSet.series[i].chks)))
 		nextSet.series[i].lset = nextUnloaded.series[i].lset
 	}
 
@@ -565,6 +581,16 @@ func (c *loadingSeriesChunksSetIterator) parseGroups(partialSeries []partialSeri
 					groupIdx:    gIdx,
 					firstChkIdx: parsedChunksCount,
 				})
+			}
+
+			for cIdx := parsedChunksCount; cIdx < parsedChunksCount+len(g.chunks); cIdx++ {
+				chunkWithinGroupIdx := cIdx - parsedChunksCount
+				estLen := g.chunks[chunkWithinGroupIdx].length
+				if estLen != maxEstimatedLength {
+					lengthEstimationMismatch.Observe(float64(int64(len(series.parsedChunks[cIdx].Raw.Data))-estLen) + 5) // + 1 for encoding + 4 for crc
+				} else {
+					defaultEstimationUsed.Inc()
+				}
 			}
 
 			parsedChunksCount += len(g.chunks)

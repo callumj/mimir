@@ -13,6 +13,8 @@ import (
 	"github.com/golang/snappy"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
@@ -673,6 +675,25 @@ func openBlockSeriesChunkRefsSetsIterator(
 	return iterator, nil
 }
 
+var (
+	numGroupsPerSeries = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_num_groups_per_series",
+		Buckets: []float64{1, 2, 3, 4, 5, 100},
+	})
+	numChunksPerGroup = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_num_chunks_per_group",
+		Buckets: []float64{1, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 100},
+	})
+	numChunksPerSeries = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_num_chunks_per_series",
+		Buckets: []float64{1, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 100},
+	})
+	numSelectedGroupsPerSeries = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "cortex_bucket_store_num_selected_groups_per_series",
+		Buckets: []float64{1, 2, 3, 4, 5, 100},
+	})
+)
+
 func newLoadingSeriesChunkRefsSetIterator(
 	ctx context.Context,
 	postingsSetIterator *postingsSetsIterator,
@@ -773,7 +794,15 @@ func (s *loadingSeriesChunkRefsSetIterator) Next() bool {
 		var groups []seriesChunkRefsGroup
 		if !s.skipChunks {
 			groups = partitionChunks(chks, s.blockID)
+			numGroupsPerSeries.Observe(float64(len(groups)))
+			totalChunks := 0
+			for _, g := range groups {
+				numChunksPerGroup.Observe(float64(len(g.chunks)))
+				totalChunks += len(g.chunks)
+			}
+			numChunksPerSeries.Observe(float64(totalChunks))
 			groups = removeGroupsOutsideOfRange(groups, s.minTime, s.maxTime)
+			numSelectedGroupsPerSeries.Observe(float64(len(groups)))
 			if len(groups) == 0 {
 				// There are no chunks for this series in the requested time range; skip it
 				continue
