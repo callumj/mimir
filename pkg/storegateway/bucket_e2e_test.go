@@ -28,6 +28,8 @@ import (
 	"github.com/weaveworks/common/httpgrpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/grafana/mimir/pkg/util/validation"
+
 	"github.com/grafana/mimir/pkg/mimirpb"
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
 	"github.com/grafana/mimir/pkg/storage/tsdb/block"
@@ -202,8 +204,11 @@ func prepareStoreWithTestBlocks(t testing.TB, bkt objstore.Bucket, cfg *prepareS
 	metaFetcher, err := block.NewMetaFetcher(s.logger, 20, objstore.WithNoopInstr(bkt), cfg.tempDir, nil, []block.MetadataFilter{})
 	assert.NoError(t, err)
 
+	overrides, err := validation.NewOverrides(validation.Limits{}, nil)
+	require.NoError(t, err)
+
 	// Have our options in the beginning so tests can override logger and index cache if they need to
-	storeOpts := append([]BucketStoreOption{WithLogger(s.logger), WithIndexCache(s.cache)}, cfg.bucketStoreOpts...)
+	storeOpts := append([]BucketStoreOption{WithLogger(s.logger), WithIndexCache(s.cache), WithIgnoreNativeHistogramChunks(overrides)}, cfg.bucketStoreOpts...)
 
 	store, err := NewBucketStore(
 		"tenant",

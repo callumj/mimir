@@ -168,9 +168,9 @@ func newSeriesChunksSeriesSet(from seriesChunksSetIterator) storepb.SeriesSet {
 	}
 }
 
-func newSeriesSetWithChunks(ctx context.Context, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats) storepb.SeriesSet {
+func newSeriesSetWithChunks(ctx context.Context, chunkReaders bucketChunkReaders, refsIterator seriesChunkRefsSetIterator, refsIteratorBatchSize int, stats *safeQueryStats, ignoreNativeHistograms bool) storepb.SeriesSet {
 	var iterator seriesChunksSetIterator
-	iterator = newLoadingSeriesChunksSetIterator(chunkReaders, refsIterator, refsIteratorBatchSize, stats)
+	iterator = newLoadingSeriesChunksSetIterator(chunkReaders, refsIterator, refsIteratorBatchSize, stats, ignoreNativeHistograms)
 	iterator = newPreloadingAndStatsTrackingSetIterator[seriesChunksSet](ctx, 1, iterator, stats)
 	return newSeriesChunksSeriesSet(iterator)
 }
@@ -305,21 +305,23 @@ func newPreloadingAndStatsTrackingSetIterator[Set any](ctx context.Context, prel
 }
 
 type loadingSeriesChunksSetIterator struct {
-	chunkReaders  bucketChunkReaders
-	from          seriesChunkRefsSetIterator
-	fromBatchSize int
-	stats         *safeQueryStats
+	chunkReaders           bucketChunkReaders
+	from                   seriesChunkRefsSetIterator
+	fromBatchSize          int
+	stats                  *safeQueryStats
+	ignoreNativeHistograms bool
 
 	current seriesChunksSet
 	err     error
 }
 
-func newLoadingSeriesChunksSetIterator(chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats) *loadingSeriesChunksSetIterator {
+func newLoadingSeriesChunksSetIterator(chunkReaders bucketChunkReaders, from seriesChunkRefsSetIterator, fromBatchSize int, stats *safeQueryStats, ignoreNativeHistograms bool) *loadingSeriesChunksSetIterator {
 	return &loadingSeriesChunksSetIterator{
-		chunkReaders:  chunkReaders,
-		from:          from,
-		fromBatchSize: fromBatchSize,
-		stats:         stats,
+		chunkReaders:           chunkReaders,
+		from:                   from,
+		fromBatchSize:          fromBatchSize,
+		stats:                  stats,
+		ignoreNativeHistograms: ignoreNativeHistograms,
 	}
 }
 
@@ -381,6 +383,34 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	}
 
 	nextSet.chunksReleaser = chunksPool
+
+	if c.ignoreNativeHistograms {
+		seriesWriteIdx := 0
+		for _, series := range nextSet.series {
+			chksWriteIdx := 0
+			for _, chk := range series.chks {
+				if chk.Raw == nil {
+					continue
+				}
+				series.chks[chksWriteIdx] = chk
+				chksWriteIdx++
+			}
+			series.chks = series.chks[:chksWriteIdx]
+
+			if len(series.chks) == 0 {
+				continue
+			}
+			nextSet.series[seriesWriteIdx] = series
+			seriesWriteIdx++
+		}
+		nextSet.series = nextSet.series[:seriesWriteIdx]
+
+		if len(nextSet.series) == 0 {
+			nextSet.release()
+			return c.Next()
+		}
+	}
+
 	c.current = nextSet
 	return true
 }

@@ -460,6 +460,20 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 		series: generateSeriesEntriesWithChunks(t, 10),
 	}
 
+	// block3 contains native histogram chunks (denoted by the chk.Raw being nil)
+	se := generateSeriesEntriesWithChunks(t, 10)
+	for i := range se {
+		for j := range se[i].chks {
+			if j%2 == 0 {
+				se[i].chks[j].Raw = nil
+			}
+		}
+	}
+	block3 := testBlock{
+		ulid:   ulid.MustNew(3, nil),
+		series: se,
+	}
+
 	toSeriesChunkRefs := func(block testBlock, seriesIndex int) seriesChunkRefs {
 		series := block.series[seriesIndex]
 
@@ -480,11 +494,12 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		existingBlocks      []testBlock
-		setsToLoad          []seriesChunkRefsSet
-		expectedSets        []seriesChunksSet
-		addLoadErr, loadErr error
-		expectedErr         string
+		existingBlocks         []testBlock
+		setsToLoad             []seriesChunkRefsSet
+		ignoreNativeHistograms bool
+		expectedSets           []seriesChunksSet
+		addLoadErr, loadErr    error
+		expectedErr            string
 	}{
 		"loads single set from single block": {
 			existingBlocks: []testBlock{block1},
@@ -574,6 +589,40 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			loadErr:      errors.New("test err"),
 			expectedErr:  "test err",
 		},
+		"loads single set from single block with some ignored histogram chunks": {
+			existingBlocks: []testBlock{block3},
+			setsToLoad: []seriesChunkRefsSet{
+				{series: []seriesChunkRefs{toSeriesChunkRefs(block3, 0), toSeriesChunkRefs(block3, 1)}},
+			},
+			ignoreNativeHistograms: true,
+			expectedSets: []seriesChunksSet{
+				{
+					series: func() []seriesEntry {
+						seriesEntries := make([]seriesEntry, 0, len(block3.series))
+
+						for i := range block3.series[0:2] {
+							refs := make([]chunks.ChunkRef, 0, len(block3.series[i].chks))
+							chks := make([]storepb.AggrChunk, 0, len(block3.series[i].chks))
+
+							for j := range block3.series[i].chks {
+								if j%2 != 0 {
+									refs = append(refs, block3.series[i].refs[j])
+									chks = append(chks, block3.series[i].chks[j])
+								}
+							}
+
+							seriesEntries = append(seriesEntries, seriesEntry{
+								lset: block3.series[i].lset,
+								refs: refs,
+								chks: chks,
+							})
+						}
+
+						return seriesEntries
+					}(),
+				},
+			},
+		},
 	}
 
 	for testName, testCase := range testCases {
@@ -591,7 +640,7 @@ func TestLoadingSeriesChunksSetIterator(t *testing.T) {
 			readers := newChunkReaders(readersMap)
 
 			// Run test
-			set := newLoadingSeriesChunksSetIterator(*readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats())
+			set := newLoadingSeriesChunksSetIterator(*readers, newSliceSeriesChunkRefsSetIterator(nil, testCase.setsToLoad...), 100, newSafeQueryStats(), testCase.ignoreNativeHistograms)
 			loadedSets := readAllSeriesChunksSets(set)
 
 			// Assertions
@@ -680,7 +729,7 @@ func BenchmarkLoadingSeriesChunksSetIterator(b *testing.B) {
 
 			for n := 0; n < b.N; n++ {
 				batchSize := numSeriesPerSet
-				it := newLoadingSeriesChunksSetIterator(*chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats)
+				it := newLoadingSeriesChunksSetIterator(*chunkReaders, newSliceSeriesChunkRefsSetIterator(nil, sets...), batchSize, stats, false)
 
 				actualSeries := 0
 				actualChunks := 0
@@ -751,11 +800,13 @@ func (f *chunkReaderMock) load(result []seriesEntry, chunksPool *pool.SafeSlabPo
 		return f.loadErr
 	}
 	for chunkRef, indices := range f.toLoad {
-		// Take bytes from the pool, so we can assert on number of allocations and that frees are happening
-		chunkData := f.chunks[chunkRef].Raw.Data
-		copiedChunkData := chunksPool.Get(len(chunkData))
-		copy(copiedChunkData, chunkData)
-		result[indices.seriesEntry].chks[indices.chunk].Raw = &storepb.Chunk{Data: copiedChunkData}
+		if f.chunks[chunkRef].Raw != nil {
+			// Take bytes from the pool, so we can assert on number of allocations and that frees are happening
+			chunkData := f.chunks[chunkRef].Raw.Data
+			copiedChunkData := chunksPool.Get(len(chunkData))
+			copy(copiedChunkData, chunkData)
+			result[indices.seriesEntry].chks[indices.chunk].Raw = &storepb.Chunk{Data: copiedChunkData}
+		}
 	}
 	return nil
 }
