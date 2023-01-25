@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -2085,7 +2086,7 @@ func setupStoreForHintsTest(t *testing.T, opts ...BucketStoreOption) (test.TB, *
 
 	var (
 		logger   = log.NewNopLogger()
-		instrBkt = objstore.WithNoopInstr(bkt)
+		instrBkt = objstore.WithNoopInstr(newCancellationRespectingBucket(bkt))
 		random   = rand.New(rand.NewSource(120))
 	)
 
@@ -2996,4 +2997,80 @@ func BenchmarkFilterPostingsByCachedShardHash_NoPostingsShifted(b *testing.B) {
 		// modify it (cache is empty).
 		filterPostingsByCachedShardHash(ps, shard, cachedSeriesHasher{cache}, nil)
 	}
+}
+
+type cancellationRespectingBucket struct {
+	innerBucket objstore.Bucket
+}
+
+func newCancellationRespectingBucket(innerBucket objstore.Bucket) objstore.Bucket {
+	return &cancellationRespectingBucket{innerBucket}
+}
+
+func (b *cancellationRespectingBucket) Close() error {
+	return b.innerBucket.Close()
+}
+
+func (b *cancellationRespectingBucket) Iter(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return b.innerBucket.Iter(ctx, dir, f, options...)
+}
+
+func (b *cancellationRespectingBucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	return b.innerBucket.Get(ctx, name)
+}
+
+func (b *cancellationRespectingBucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	return b.innerBucket.GetRange(ctx, name, off, length)
+}
+
+func (b *cancellationRespectingBucket) Exists(ctx context.Context, name string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
+	return b.innerBucket.Exists(ctx, name)
+}
+
+func (b *cancellationRespectingBucket) IsObjNotFoundErr(err error) bool {
+	return b.innerBucket.IsObjNotFoundErr(err)
+}
+
+func (b *cancellationRespectingBucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
+	if ctx.Err() != nil {
+		return objstore.ObjectAttributes{}, ctx.Err()
+	}
+
+	return b.innerBucket.Attributes(ctx, name)
+}
+
+func (b *cancellationRespectingBucket) Upload(ctx context.Context, name string, r io.Reader) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return b.innerBucket.Upload(ctx, name, r)
+}
+
+func (b *cancellationRespectingBucket) Delete(ctx context.Context, name string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return b.innerBucket.Delete(ctx, name)
+}
+
+func (b *cancellationRespectingBucket) Name() string {
+	return b.innerBucket.Name()
 }
