@@ -849,12 +849,17 @@ func removeGroupsOutsideOfRange(groups []seriesChunkRefsGroup, minTime, maxTime 
 // partitionChunks creates a slice of seriesChunkRefsGroup for each groups of groups within the same segment file
 func partitionChunks(chks []seriesChunkRef, blockID ulid.ULID) []seriesChunkRefsGroup {
 	var groups []seriesChunkRefsGroup
+	currentBlockLastChunkIdx := 0
 	for i := range chks {
-		if len(groups) == 0 || chunkSegmentFile(groups[len(groups)-1].lastRef()) != chunkSegmentFile(chks[i].ref) {
+		if chunkSegmentFile(chks[currentBlockLastChunkIdx].ref) != chunkSegmentFile(chks[i].ref) {
 			groups = append(groups, seriesChunkRefsGroup{blockID: blockID})
+			groups[len(groups)-1].chunks = chks[currentBlockLastChunkIdx:i]
+			currentBlockLastChunkIdx = i
 		}
-		groups[len(groups)-1].chunks = append(groups[len(groups)-1].chunks, chks[i])
 	}
+
+	groups = append(groups, seriesChunkRefsGroup{chunks: chks[currentBlockLastChunkIdx:], blockID: blockID})
+
 	return groups
 }
 
