@@ -221,6 +221,8 @@ func newQueryTripperware(
 	)
 
 	if cfg.ShardedQueries {
+		cardinalityEstimationMiddleware := newCardinalityEstimationMiddleware()
+
 		queryshardingMiddleware := newQueryShardingMiddleware(
 			log,
 			engine,
@@ -229,11 +231,15 @@ func newQueryTripperware(
 		)
 		queryRangeMiddleware = append(
 			queryRangeMiddleware,
+			newInstrumentMiddleware("cardinality_estimation", metrics, log),
+			cardinalityEstimationMiddleware,
 			newInstrumentMiddleware("querysharding", metrics, log),
 			queryshardingMiddleware,
 		)
 		queryInstantMiddleware = append(
 			queryInstantMiddleware,
+			newInstrumentMiddleware("cardinality_estimation", metrics, log),
+			cardinalityEstimationMiddleware,
 			newInstrumentMiddleware("querysharding", metrics, log),
 			queryshardingMiddleware,
 		)
