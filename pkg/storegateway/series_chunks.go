@@ -337,10 +337,14 @@ var (
 	defaultEstimationUsed = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "cortex_bucket_store_chunks_length_default_estimations_used_total",
 	})
-	selectedChunksPerGroup = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "cortex_bucket_store_selected_chunks_per_group",
-		Buckets: []float64{1, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 100},
+	removedChunksSizeBytes = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "cortex_bucket_store_removed_chunks_per_group_bytes_total",
+		Help: "Removed chunks per group in bytes",
 	})
+	totalFetchedBytes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cortex_bucket_store_fetched_grouped_chunks_total",
+		Help: "Total number of bytes fetched from the store for chunk groups",
+	}, []string{"reason"})
 )
 
 func newLoadingSeriesChunksSetIterator(
@@ -443,7 +447,16 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		c.err = errors.Wrap(err, "loading chunks")
 		return false
 	}
-
+	{
+		// At this stage we have all the chunks that we have fetched from wherever, we can add their sizes and record how much data we've fetched
+		fetchedBytes := 0
+		for _, s := range partialSeries {
+			for _, rg := range s.rawGroups {
+				fetchedBytes += len(rg)
+			}
+		}
+		totalFetchedBytes.WithLabelValues("normal").Add(float64(fetchedBytes))
+	}
 	// Parse the bytes we have from the cache or the bucket. This returns the groups for which we didn't have
 	// enough fetched bytes. This may happen when the group length was underestimated.
 	underfetchedGroups, err := c.parseGroups(partialSeries)
@@ -458,6 +471,13 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 			c.err = err
 			return false
 		}
+		{
+			fetchedBytes := 0
+			for _, g := range underfetchedGroups {
+				fetchedBytes += len(partialSeries[g.seriesIdx].rawGroups[g.groupIdx])
+			}
+			totalFetchedBytes.WithLabelValues("refetch").Add(float64(fetchedBytes))
+		}
 	}
 
 	if c.cache != nil {
@@ -467,9 +487,11 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	for i, s := range partialSeries {
 		// Since groups may contain more chunks that we need for the request,
 		// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
+
 		nextSet.series[i].chks = removeNonRequestedChunks(s.parsedChunks, c.minTime, c.maxTime)
-		selectedChunksPerGroup.Observe(float64(len(nextSet.series[i].chks)))
 		nextSet.series[i].lset = nextUnloaded.series[i].lset
+
+		removedChunksSizeBytes.Add(float64(chunksSize(s.parsedChunks[len(nextSet.series[i].chks):])))
 	}
 
 	c.current = nextSet
