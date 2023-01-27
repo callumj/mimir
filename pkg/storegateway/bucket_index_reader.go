@@ -360,7 +360,7 @@ func (r *bucketIndexReader) fetchPostings(ctx context.Context, keys []labels.Lab
 
 	// TODO(bwplotka): Asses how large in worst case scenario this can be. (e.g fetch for AllPostingsKeys)
 	// Consider sub split if too big.
-	parts := r.block.partitioner.Partition(len(ptrs), func(i int) (start, end uint64) {
+	parts := r.block.partitioners.Postings.Partition(len(ptrs), func(i int) (start, end uint64) {
 		return uint64(ptrs[i].ptr.Start), uint64(ptrs[i].ptr.End)
 	})
 
@@ -481,7 +481,7 @@ func (r *bucketIndexReader) preloadSeries(ctx context.Context, ids []storage.Ser
 		loaded.addSeries(id, b)
 	}
 
-	parts := r.block.partitioner.Partition(len(ids), func(i int) (start, end uint64) {
+	parts := r.block.partitioners.Series.Partition(len(ids), func(i int) (start, end uint64) {
 		return uint64(ids[i]), uint64(ids[i] + maxSeriesSize)
 	})
 	g, ctx := errgroup.WithContext(ctx)
