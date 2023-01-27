@@ -341,6 +341,10 @@ var (
 		Name: "cortex_bucket_store_removed_chunks_per_group_bytes_total",
 		Help: "Removed chunks per group in bytes",
 	})
+	overheadChunkBytes = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "cortex_bucket_store_overhead_bytes_total",
+		Help: "The bytes for chunk encoding, chunk length, and crc, that aren't counted as the touched bytes in the main implementation. These bytes are included in cortex_bucket_store_fetched_grouped_chunks_total. These bytes are NOT included in cortex_bucket_store_removed_chunks_per_group_bytes_total",
+	})
 	totalFetchedBytes = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cortex_bucket_store_fetched_grouped_chunks_total",
 		Help: "Total number of bytes fetched from the store for chunk groups",
@@ -449,13 +453,7 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 	}
 	{
 		// At this stage we have all the chunks that we have fetched from wherever, we can add their sizes and record how much data we've fetched
-		fetchedBytes := 0
-		for _, s := range partialSeries {
-			for _, rg := range s.rawGroups {
-				fetchedBytes += len(rg)
-			}
-		}
-		totalFetchedBytes.WithLabelValues("normal").Add(float64(fetchedBytes))
+		totalFetchedBytes.WithLabelValues("normal").Add(float64(sumRawGroupsSizes(partialSeries)))
 	}
 	// Parse the bytes we have from the cache or the bucket. This returns the groups for which we didn't have
 	// enough fetched bytes. This may happen when the group length was underestimated.
@@ -484,6 +482,17 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 		c.storeChunkGroups(cachedRanges, partialSeries)
 	}
 
+	// Next we will count the overhead in chunkLen+chunkEnc+crc that we fetch; these 3 are counted towards our fetched bytes,
+	// but are not counted towards the touched bytes in the ungrouped chunkReader implementation
+	{
+		totalRaw := sumRawGroupsSizes(partialSeries)
+		totalData := 0
+		for _, s := range partialSeries {
+			totalData += chunksSize(s.parsedChunks)
+		}
+		overheadChunkBytes.Add(float64(totalRaw - totalData))
+	}
+
 	for i, s := range partialSeries {
 		// Since groups may contain more chunks that we need for the request,
 		// go through all chunks and reslice to remove any chunks that are outside the request's MinT/MaxT
@@ -496,6 +505,16 @@ func (c *loadingSeriesChunksSetIterator) Next() (retHasNext bool) {
 
 	c.current = nextSet
 	return true
+}
+
+func sumRawGroupsSizes(partialSeries []partialSeriesChunksSet) int {
+	fetchedBytes := 0
+	for _, s := range partialSeries {
+		for _, rg := range s.rawGroups {
+			fetchedBytes += len(rg)
+		}
+	}
+	return fetchedBytes
 }
 
 func (c *loadingSeriesChunksSetIterator) refetchGroups(underfetchedGroups []underfetchedGroupIdx, partialSeries []partialSeriesChunksSet, chunksPool *pool.SafeSlabPool[byte], nextSet seriesChunksSet) error {
