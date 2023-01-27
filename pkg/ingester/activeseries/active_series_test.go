@@ -16,6 +16,8 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/grafana/mimir/pkg/storage/sharding"
 )
 
 func copyFn(l labels.Labels) labels.Labels { return l }
@@ -91,7 +93,7 @@ func TestActiveSeries_ShouldCorrectlyHandleHashCollisions(t *testing.T) {
 	ls1 := labels.FromStrings("_z~!!a+0", "interesting_data_here_", "zzzzz%!z", "more_interesting_data_here")
 	ls2 := labels.FromStrings("_z-m\xaew\xa3\xc0", "interesting_data_here_", "zzzzz\xa5|z", "more_interesting_data_here")
 
-	require.True(t, ls1.Hash() == ls2.Hash())
+	require.True(t, sharding.ShardFunc(ls1) == sharding.ShardFunc(ls2))
 	c := NewActiveSeries(&Matchers{}, DefaultTimeout)
 	c.UpdateSeries(ls1, time.Now(), copyFn)
 	c.UpdateSeries(ls2, time.Now(), copyFn)

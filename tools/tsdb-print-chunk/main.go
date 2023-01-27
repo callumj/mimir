@@ -13,6 +13,8 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+
+	"github.com/grafana/mimir/pkg/storage/sharding"
 )
 
 var logger = log.NewLogfmtLogger(os.Stderr)
@@ -25,7 +27,7 @@ func main() {
 		return
 	}
 
-	b, err := tsdb.OpenBlock(logger, args[1], nil)
+	b, err := tsdb.OpenBlockWithOptions(logger, args[1], nil, nil, sharding.ShardFunc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to open TSDB block", args[1], "due to error:", err)
 		os.Exit(1)

@@ -5,6 +5,7 @@ package sharding
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -197,5 +198,18 @@ func TestFormatAndParseShardId(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, uint64(id), nid)
 		require.Equal(t, uint64(count), ncount)
+	}
+}
+
+func TestShardFunc_ShouldCurrentlyReturnTheSamePrometheusHash(t *testing.T) {
+	entries := []labels.Labels{
+		labels.FromStrings("first", "hello", "second", "world"),
+		labels.FromStrings("first", "hello", "second", strings.Repeat("x", 10000)),
+	}
+
+	for idx, entry := range entries {
+		t.Run(fmt.Sprintf("Test case %d", idx), func(t *testing.T) {
+			assert.Equal(t, entry.Hash(), ShardFunc(entry))
+		})
 	}
 }

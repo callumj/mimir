@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/tsdb/index"
 
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/storage/tsdb/block"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 )
@@ -159,7 +160,7 @@ func GatherIndexHealthStats(logger log.Logger, blockDir string, minTime, maxTime
 		defer runutil.CloseWithErrCapture(&err, cr, "closing chunks reader")
 	}
 
-	r, err := index.NewFileReader(filepath.Join(blockDir, block.IndexFilename))
+	r, err := index.NewFileReaderWithOptions(filepath.Join(blockDir, block.IndexFilename), nil, sharding.ShardFunc)
 	if err != nil {
 		return stats, errors.Wrap(err, "open index file")
 	}

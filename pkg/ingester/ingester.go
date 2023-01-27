@@ -951,7 +951,7 @@ func (i *Ingester) pushSamplesToAppender(userID string, timeseries []mimirpb.Pre
 		}
 
 		// Look up a reference for this series.
-		ref, copiedLabels := app.GetRef(mimirpb.FromLabelAdaptersToLabels(ts.Labels), mimirpb.FromLabelAdaptersToLabels(ts.Labels).Hash())
+		ref, copiedLabels := app.GetRef(mimirpb.FromLabelAdaptersToLabels(ts.Labels), sharding.ShardFunc(mimirpb.FromLabelAdaptersToLabels(ts.Labels)))
 
 		// To find out if any sample was added to this series, we keep old value.
 		oldSucceededSamplesCount := stats.succeededSamplesCount
@@ -1779,6 +1779,7 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 		HeadPostingsForMatchersCacheTTL:   i.cfg.BlocksStorageConfig.TSDB.HeadPostingsForMatchersCacheTTL,
 		HeadPostingsForMatchersCacheSize:  i.cfg.BlocksStorageConfig.TSDB.HeadPostingsForMatchersCacheSize,
 		HeadPostingsForMatchersCacheForce: i.cfg.BlocksStorageConfig.TSDB.HeadPostingsForMatchersCacheForce,
+		ShardFunc:                         sharding.ShardFunc,
 	}, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open TSDB: %s", udir)
@@ -1847,6 +1848,7 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 			PostingsForMatchersCacheTTL:    i.cfg.BlocksStorageConfig.EphemeralTSDB.HeadPostingsForMatchersCacheTTL,
 			PostingsForMatchersCacheSize:   i.cfg.BlocksStorageConfig.EphemeralTSDB.HeadPostingsForMatchersCacheSize,
 			PostingsForMatchersCacheForce:  i.cfg.BlocksStorageConfig.EphemeralTSDB.HeadPostingsForMatchersCacheForce,
+			ShardFunc:                      sharding.ShardFunc,
 		}
 
 		headOptions.MaxExemplars.Store(0)

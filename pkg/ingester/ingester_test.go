@@ -4055,6 +4055,7 @@ func TestHeadCompactionOnStartup(t *testing.T) {
 			NoLockfile:        true,
 			MinBlockDuration:  chunkRange,
 			MaxBlockDuration:  chunkRange,
+			ShardFunc:         sharding.ShardFunc,
 		}, nil)
 		require.NoError(t, err)
 

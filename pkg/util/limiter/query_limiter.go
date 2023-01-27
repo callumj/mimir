@@ -13,6 +13,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/grafana/mimir/pkg/mimirpb"
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/util/globalerror"
 	"github.com/grafana/mimir/pkg/util/validation"
 )
@@ -81,7 +82,7 @@ func (ql *QueryLimiter) AddSeries(seriesLabels []mimirpb.LabelAdapter) error {
 	if ql.maxSeriesPerQuery == 0 {
 		return nil
 	}
-	fingerprint := mimirpb.FromLabelAdaptersToLabels(seriesLabels).Hash()
+	fingerprint := sharding.ShardFunc(mimirpb.FromLabelAdaptersToLabels(seriesLabels))
 
 	ql.uniqueSeriesMx.Lock()
 	defer ql.uniqueSeriesMx.Unlock()

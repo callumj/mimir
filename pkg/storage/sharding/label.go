@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 )
@@ -14,6 +15,10 @@ import (
 const (
 	// ShardLabel is a reserved label referencing a shard on read path.
 	ShardLabel = "__query_shard__"
+)
+
+var (
+	seps = []byte{'\xff'}
 )
 
 // ShardSelector holds information about the configured query shard.
@@ -99,4 +104,37 @@ func ParseShardIDLabelValue(val string) (index, shardCount uint64, _ error) {
 	}
 
 	return index - 1, count, nil
+}
+
+// ShardFunc is a simpler API to the above, when you don't need to avoid allocations.
+func ShardFunc(l labels.Labels) uint64 {
+	hash, _ := labelsXXHash(make([]byte, 0, 1024), l)
+	return hash
+}
+
+// labelsXXHash replicates historical hash computation from Prometheus circa 2022.
+// The buffer b can be recycled to avoid allocations.
+func labelsXXHash(b []byte, ls labels.Labels) (uint64, []byte) {
+	b = b[:0]
+
+	for i, v := range ls {
+		if len(b)+len(v.Name)+len(v.Value)+2 >= cap(b) {
+			// If labels entry is 1KB+ do not allocate whole entry.
+			h := xxhash.New()
+			_, _ = h.Write(b)
+			for _, v := range ls[i:] {
+				_, _ = h.WriteString(v.Name)
+				_, _ = h.Write(seps)
+				_, _ = h.WriteString(v.Value)
+				_, _ = h.Write(seps)
+			}
+			return h.Sum64(), b
+		}
+
+		b = append(b, v.Name...)
+		b = append(b, seps[0])
+		b = append(b, v.Value...)
+		b = append(b, seps[0])
+	}
+	return xxhash.Sum64(b), b
 }

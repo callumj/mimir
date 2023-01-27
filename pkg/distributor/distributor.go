@@ -44,6 +44,7 @@ import (
 	"github.com/grafana/mimir/pkg/distributor/forwarding"
 	ingester_client "github.com/grafana/mimir/pkg/ingester/client"
 	"github.com/grafana/mimir/pkg/mimirpb"
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/util"
 	"github.com/grafana/mimir/pkg/util/ephemeral"
 	"github.com/grafana/mimir/pkg/util/globalerror"
@@ -1787,7 +1788,7 @@ func (d *Distributor) MetricsForLabelMatchers(ctx context.Context, from, through
 	for _, resp := range resps {
 		ms := ingester_client.FromMetricsForLabelMatchersResponse(resp.(*ingester_client.MetricsForLabelMatchersResponse))
 		for _, m := range ms {
-			metrics[m.Hash()] = m
+			metrics[sharding.ShardFunc(m)] = m
 		}
 	}
 

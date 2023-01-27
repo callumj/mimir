@@ -327,7 +327,14 @@ lint: check-makefiles
 	# Note that we don't automatically suggest replacing sort.Float64s() with slices.Sort() as the documentation for slices.Sort()
 	# at the time of writing warns that slices.Sort() may not correctly handle NaN values.
 	faillint -paths \
-		"sort.{Strings,Ints}=golang.org/x/exp/slices.Sort" \
+		"sort.{Strings,Ints}=golang.org/x/exp/slices.{Sort}" \
+		./pkg/... ./cmd/... ./tools/... ./integration/...
+
+	# Ensure we always pass our sharding function to TSDB.
+	faillint -paths \
+		"github.com/prometheus/prometheus/tsdb.{NewLeveledCompactor}=github.com/prometheus/prometheus/tsdb.NewLeveledCompactorWithChunkSize, \
+		github.com/prometheus/prometheus/tsdb.{OpenBlock}=github.com/prometheus/prometheus/tsdb.OpenBlockWithOptions, \
+		github.com/prometheus/prometheus/tsdb/index.{NewFileReader}=github.com/prometheus/prometheus/tsdb/index.NewFileReaderWithOptions" \
 		./pkg/... ./cmd/... ./tools/... ./integration/...
 
 format: ## Run gofmt and goimports.

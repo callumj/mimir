@@ -1407,6 +1407,7 @@ func mockTSDB(t *testing.T, dir string, numSeries, numBlocks int, minT, maxT int
 		MinBlockDuration:  2 * time.Hour.Milliseconds(),
 		MaxBlockDuration:  2 * time.Hour.Milliseconds(),
 		RetentionDuration: 15 * 24 * time.Hour.Milliseconds(),
+		ShardFunc:         sharding.ShardFunc,
 	}, nil)
 	require.NoError(t, err)
 
@@ -1449,6 +1450,7 @@ func mockTSDBWithGenerator(t *testing.T, dir string, next func() (bool, labels.L
 		MinBlockDuration:  2 * time.Hour.Milliseconds(),
 		MaxBlockDuration:  2 * time.Hour.Milliseconds(),
 		RetentionDuration: 15 * 24 * time.Hour.Milliseconds(),
+		ShardFunc:         sharding.ShardFunc,
 	}, nil)
 	require.NoError(t, err)
 

@@ -51,11 +51,12 @@ type AlertDiscovery struct {
 
 // Alert has info for an alert.
 type Alert struct {
-	Labels      labels.Labels `json:"labels"`
-	Annotations labels.Labels `json:"annotations"`
-	State       string        `json:"state"`
-	ActiveAt    *time.Time    `json:"activeAt"`
-	Value       string        `json:"value"`
+	Labels          labels.Labels `json:"labels"`
+	Annotations     labels.Labels `json:"annotations"`
+	State           string        `json:"state"`
+	ActiveAt        *time.Time    `json:"activeAt,omitempty"`
+	KeepFiringSince *time.Time    `json:"keepFiringSince,omitempty"`
+	Value           string        `json:"value"`
 }
 
 // RuleDiscovery has info for all rules
@@ -178,11 +179,12 @@ func (a *API) PrometheusRules(w http.ResponseWriter, req *http.Request) {
 				alerts := make([]*Alert, 0, len(rl.Alerts))
 				for _, a := range rl.Alerts {
 					alerts = append(alerts, &Alert{
-						Labels:      mimirpb.FromLabelAdaptersToLabels(a.Labels),
-						Annotations: mimirpb.FromLabelAdaptersToLabels(a.Annotations),
-						State:       a.GetState(),
-						ActiveAt:    &a.ActiveAt,
-						Value:       strconv.FormatFloat(a.Value, 'e', -1, 64),
+						Labels:          mimirpb.FromLabelAdaptersToLabels(a.Labels),
+						Annotations:     mimirpb.FromLabelAdaptersToLabels(a.Annotations),
+						State:           a.GetState(),
+						ActiveAt:        &a.ActiveAt,
+						KeepFiringSince: &a.KeepFiringSince,
+						Value:           strconv.FormatFloat(a.Value, 'e', -1, 64),
 					})
 				}
 				grp.Rules[i] = alertingRule{
@@ -260,11 +262,12 @@ func (a *API) PrometheusAlerts(w http.ResponseWriter, req *http.Request) {
 			if rl.Rule.Alert != "" {
 				for _, a := range rl.Alerts {
 					alerts = append(alerts, &Alert{
-						Labels:      mimirpb.FromLabelAdaptersToLabels(a.Labels),
-						Annotations: mimirpb.FromLabelAdaptersToLabels(a.Annotations),
-						State:       a.GetState(),
-						ActiveAt:    &a.ActiveAt,
-						Value:       strconv.FormatFloat(a.Value, 'e', -1, 64),
+						Labels:          mimirpb.FromLabelAdaptersToLabels(a.Labels),
+						Annotations:     mimirpb.FromLabelAdaptersToLabels(a.Annotations),
+						State:           a.GetState(),
+						ActiveAt:        &a.ActiveAt,
+						KeepFiringSince: &a.KeepFiringSince,
+						Value:           strconv.FormatFloat(a.Value, 'e', -1, 64),
 					})
 				}
 			}

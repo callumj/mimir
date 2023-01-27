@@ -176,6 +176,8 @@ type HeadOptions struct {
 	PostingsForMatchersCacheTTL   time.Duration
 	PostingsForMatchersCacheSize  int
 	PostingsForMatchersCacheForce bool
+
+	ShardFunc func(l labels.Labels) uint64 // Compute hash of labels to divide series into shards.
 }
 
 const (
@@ -1566,8 +1568,12 @@ func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*memSeries, bool, e
 }
 
 func (h *Head) getOrCreateWithID(id chunks.HeadSeriesRef, hash uint64, lset labels.Labels) (*memSeries, bool, error) {
+	shardHash := hash
+	if h.opts.ShardFunc != nil {
+		shardHash = h.opts.ShardFunc(lset)
+	}
 	s, created, err := h.series.getOrSet(hash, lset, func() *memSeries {
-		return newMemSeries(lset, id, hash, h.opts.ChunkEndTimeVariance, h.opts.IsolationDisabled)
+		return newMemSeries(lset, id, shardHash, h.opts.ChunkEndTimeVariance, h.opts.IsolationDisabled)
 	})
 	if err != nil {
 		return nil, false, err
@@ -2074,7 +2080,7 @@ func (h *Head) updateWALReplayStatusRead(current int) {
 
 func GenerateTestHistograms(n int) (r []*histogram.Histogram) {
 	for i := 0; i < n; i++ {
-		r = append(r, &histogram.Histogram{
+		h := histogram.Histogram{
 			Count:         10 + uint64(i*8),
 			ZeroCount:     2 + uint64(i),
 			ZeroThreshold: 0.001,
@@ -2090,9 +2096,12 @@ func GenerateTestHistograms(n int) (r []*histogram.Histogram) {
 				{Offset: 1, Length: 2},
 			},
 			NegativeBuckets: []int64{int64(i + 1), 1, -1, 0},
-		})
+		}
+		if i > 0 {
+			h.CounterResetHint = histogram.NotCounterReset
+		}
+		r = append(r, &h)
 	}
-
 	return r
 }
 
@@ -2118,13 +2127,12 @@ func GenerateTestGaugeHistograms(n int) (r []*histogram.Histogram) {
 			NegativeBuckets: []int64{int64(i + 1), 1, -1, 0},
 		})
 	}
-
 	return r
 }
 
 func GenerateTestFloatHistograms(n int) (r []*histogram.FloatHistogram) {
 	for i := 0; i < n; i++ {
-		r = append(r, &histogram.FloatHistogram{
+		h := histogram.FloatHistogram{
 			Count:         10 + float64(i*8),
 			ZeroCount:     2 + float64(i),
 			ZeroThreshold: 0.001,
@@ -2140,7 +2148,11 @@ func GenerateTestFloatHistograms(n int) (r []*histogram.FloatHistogram) {
 				{Offset: 1, Length: 2},
 			},
 			NegativeBuckets: []float64{float64(i + 1), float64(i + 2), float64(i + 1), float64(i + 1)},
-		})
+		}
+		if i > 0 {
+			h.CounterResetHint = histogram.NotCounterReset
+		}
+		r = append(r, &h)
 	}
 
 	return r

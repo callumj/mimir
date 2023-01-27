@@ -14,6 +14,8 @@ import (
 	golog "github.com/go-kit/log"
 
 	"github.com/prometheus/prometheus/tsdb"
+
+	"github.com/grafana/mimir/pkg/storage/sharding"
 )
 
 func main() {
@@ -46,7 +48,7 @@ func main() {
 
 		blockDirs = append(blockDirs, d)
 
-		b, err := tsdb.OpenBlock(logger, d, nil)
+		b, err := tsdb.OpenBlockWithOptions(logger, d, nil, nil, sharding.ShardFunc)
 		if err != nil {
 			log.Fatalln("failed to open block:", d, err)
 		}
@@ -77,7 +79,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	c, err := tsdb.NewLeveledCompactorWithChunkSize(ctx, nil, logger, []int64{0}, nil, segmentSizeMB*1024*1024, nil, true)
+	c, err := tsdb.NewLeveledCompactorWithChunkSize(ctx, nil, logger, []int64{0}, nil, segmentSizeMB*1024*1024, nil, true, sharding.ShardFunc)
 	if err != nil {
 		log.Fatalln("creating compator", err)
 	}

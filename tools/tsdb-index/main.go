@@ -16,6 +16,8 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/tsdb/index"
+
+	"github.com/grafana/mimir/pkg/storage/sharding"
 )
 
 var logger = log.NewLogfmtLogger(os.Stderr)
@@ -54,7 +56,7 @@ func main() {
 }
 
 func printBlockIndex(blockDir string, printChunks bool, matchers []*labels.Matcher) {
-	block, err := tsdb.OpenBlock(logger, blockDir, nil)
+	block, err := tsdb.OpenBlockWithOptions(logger, blockDir, nil, nil, sharding.ShardFunc)
 	if err != nil {
 		level.Error(logger).Log("msg", "failed to open block", "dir", blockDir, "err", err)
 		return

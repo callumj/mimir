@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/index"
 
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 	"github.com/grafana/mimir/pkg/util"
 )
@@ -79,7 +80,7 @@ func main() {
 }
 
 func analyseSymbols(blockDir string, uniqueSymbols map[string]struct{}, uniqueSymbolsPerShard []map[string]struct{}) error {
-	block, err := tsdb.OpenBlock(gokitlog.NewLogfmtLogger(os.Stderr), blockDir, nil)
+	block, err := tsdb.OpenBlockWithOptions(gokitlog.NewLogfmtLogger(os.Stderr), blockDir, nil, nil, sharding.ShardFunc)
 	if err != nil {
 		return fmt.Errorf("failed to open block: %v", err)
 	}
@@ -145,7 +146,7 @@ func analyseSymbols(blockDir string, uniqueSymbols map[string]struct{}, uniqueSy
 		lbls := builder.Labels()
 		shardID := uint64(0)
 		if shards > 0 {
-			shardID = lbls.Hash() % uint64(shards)
+			shardID = sharding.ShardFunc(lbls) % uint64(shards)
 		}
 
 		for _, l := range lbls {

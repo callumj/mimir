@@ -12,6 +12,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"go.uber.org/atomic"
+
+	"github.com/grafana/mimir/pkg/storage/sharding"
 )
 
 const (
@@ -88,7 +90,7 @@ func (c *ActiveSeries) CurrentConfig() CustomTrackersConfig {
 
 // UpdateSeries updates series timestamp to 'now'. Function is called to make a copy of labels if entry doesn't exist yet.
 func (c *ActiveSeries) UpdateSeries(series labels.Labels, now time.Time, labelsCopy func(labels.Labels) labels.Labels) {
-	fp := series.Hash()
+	fp := sharding.ShardFunc(series)
 	stripeID := fp % numStripes
 
 	c.stripes[stripeID].updateSeriesTimestamp(now, series, fp, labelsCopy)

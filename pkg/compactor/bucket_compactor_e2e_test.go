@@ -41,6 +41,7 @@ import (
 
 	"github.com/thanos-io/objstore"
 
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/storage/tsdb/block"
 	"github.com/grafana/mimir/pkg/storage/tsdb/bucketindex"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
@@ -242,7 +243,7 @@ func TestGroupCompactE2E(t *testing.T) {
 		sy, err := NewMetaSyncer(nil, nil, bkt, metaFetcher, duplicateBlocksFilter, ignoreDeletionMarkFilter, blocksMarkedForDeletion)
 		require.NoError(t, err)
 
-		comp, err := tsdb.NewLeveledCompactor(ctx, reg, logger, []int64{1000, 3000}, nil, nil, true)
+		comp, err := tsdb.NewLeveledCompactorWithChunkSize(ctx, reg, logger, []int64{1000, 3000}, nil, chunks.DefaultChunkSegmentSize, nil, true, sharding.ShardFunc)
 		require.NoError(t, err)
 
 		planner := NewSplitAndMergePlanner([]int64{1000, 3000})
@@ -722,7 +723,7 @@ func createBlockWithOptions(
 	if err := g.Wait(); err != nil {
 		return id, err
 	}
-	c, err := tsdb.NewLeveledCompactor(ctx, nil, log.NewNopLogger(), []int64{maxt - mint}, nil, nil, true)
+	c, err := tsdb.NewLeveledCompactorWithChunkSize(ctx, nil, log.NewNopLogger(), []int64{maxt - mint}, nil, chunks.DefaultChunkSegmentSize, nil, true, sharding.ShardFunc)
 	if err != nil {
 		return id, errors.Wrap(err, "create compactor")
 	}

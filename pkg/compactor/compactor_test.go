@@ -46,6 +46,7 @@ import (
 
 	"github.com/grafana/mimir/pkg/storage/bucket"
 	"github.com/grafana/mimir/pkg/storage/bucket/filesystem"
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 	"github.com/grafana/mimir/pkg/storage/tsdb/testutil"
@@ -1376,6 +1377,7 @@ func createTSDBBlock(t *testing.T, bkt objstore.Bucket, userID string, minT, max
 		MinBlockDuration:  int64(2 * 60 * 60 * 1000), // 2h period
 		MaxBlockDuration:  int64(2 * 60 * 60 * 1000), // 2h period
 		RetentionDuration: int64(15 * 86400 * 1000),  // 15 days
+		ShardFunc:         sharding.ShardFunc,
 	}, nil)
 	require.NoError(t, err)
 

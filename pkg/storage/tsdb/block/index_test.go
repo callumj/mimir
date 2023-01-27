@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/index"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/mimir/pkg/storage/sharding"
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 	e2eutil "github.com/grafana/mimir/pkg/storegateway/testhelper"
 )
@@ -36,7 +37,7 @@ func TestRewrite(t *testing.T) {
 	}, 150, 0, 1000, labels.EmptyLabels())
 	require.NoError(t, err)
 
-	ir, err := index.NewFileReader(filepath.Join(tmpDir, b.String(), IndexFilename))
+	ir, err := index.NewFileReaderWithOptions(filepath.Join(tmpDir, b.String(), IndexFilename), nil, sharding.ShardFunc)
 	require.NoError(t, err)
 
 	defer func() { require.NoError(t, ir.Close()) }()
@@ -68,7 +69,7 @@ func TestRewrite(t *testing.T) {
 	require.NoError(t, iw.Close())
 	require.NoError(t, cw.Close())
 
-	ir2, err := index.NewFileReader(filepath.Join(tmpDir, m.ULID.String(), IndexFilename))
+	ir2, err := index.NewFileReaderWithOptions(filepath.Join(tmpDir, m.ULID.String(), IndexFilename), nil, sharding.ShardFunc)
 	require.NoError(t, err)
 
 	defer func() { require.NoError(t, ir2.Close()) }()
